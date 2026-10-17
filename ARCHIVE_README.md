@@ -64,3 +64,9 @@ sha256sum -c checksums.sha256
 4. `paper/frl_submission_statements.md`
 5. `paper/submission-checklist.md`
 6. `reports/revision_change_log_2026-10-16.md`
+
+
+## GitHub repositories
+
+- Research package (paper, code, cleaned/derived data, reports, evidence): https://github.com/WEN365-1/a-share-factor-crowding-research
+- Raw data release (daily market and margin-financing files): https://github.com/WEN365-1/a-share-factor-crowding-raw-data/releases/tag/v1.0-data
