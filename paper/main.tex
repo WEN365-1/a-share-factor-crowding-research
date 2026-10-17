@@ -1,0 +1,420 @@
+% !TEX program = xelatex
+% ============================================================
+% 因子拥挤与 A 股因子衰减 —— FRL 投稿稿
+%
+% 目标期刊：Finance Research Letters（正文 ≤ 2500 词，硬约束）
+% 定位：边界条件检验，**不是**单国复制。投稿信第 3 段专门拆这一点。
+%
+% 状态（2026-10-15）：骨架。引言、数据、方法已写实；
+%   第 3 节结果全部为占位，等 11/15 闸门与真实数据回填。
+%   回填规则见文件末尾的 TODO 清单。
+% ============================================================
+% 注意：elsarticle 的引用样式由**文档类选项**控制，光设 \bibliographystyle 不够——
+% 不加 authoryear 的话引用会渲染成数字编号，而正文里是按作者-年份写的，会前后不一致。
+\documentclass[preprint,12pt,authoryear]{elsarticle}
+
+\usepackage{amsmath,amssymb}
+\usepackage{xcolor}
+% 工作稿里批注的中文要能显示，故用 xelatex + xeCJK 编译。
+% 投稿稿去掉全部中文批注后，用 pdflatex 也能编译。
+\usepackage{iftex}
+\ifXeTeX%
+\usepackage{xeCJK}%
+\setCJKmainfont{Noto Serif CJK SC}%
+\fi%
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{threeparttable}
+\usepackage{adjustbox}
+\usepackage[hidelinks]{hyperref}
+
+
+\journal{Finance Research Letters}
+
+\begin{document}
+
+\begin{frontmatter}
+
+\title{Measuring Factor Crowding When Leverage Is Observable:
+       Evidence from China's A-Share Market}
+
+\author[tongji]{Jiaheng Wen\corref{cor}\ead{2790443124@qq.com}}
+\cortext[cor]{Corresponding author.}
+\address[tongji]{Tongji University}
+
+\begin{abstract}
+Factor crowding is difficult to measure because holdings are rarely observed and return-based proxies may capture several forms of common movement. We investigate whether two proxies identify the same predictive object when leverage is observable. Using six style factors in China's A-share market from 2015--2025, we compare residual-return comovement with a margin-financing-balance proxy. Within-factor comovement between the two measures is limited. Comomentum is not robustly associated with subsequent factor returns; its one-month volatility diagnostic is directionally consistent but the broader second-moment evidence is exploratory. The margin-balance proxy is conditionally negatively associated with subsequent factor returns after controlling for factor momentum, balance levels, coverage, and factor fixed effects. In the main six-month specification, a one-standard-deviation increase is associated with approximately a four-percentage-point lower horizon-sum factor return. Because rolling formation windows overlap, we use pooled circular-shift permutation inference alongside HAC standard errors. The results support a measurement distinction: return comovement and observable leveraged financing need not be interchangeable measures of factor crowding, and the evidence is associational rather than causal.
+\end{abstract}
+
+% elsarticle 只认一个 keyword 环境；写两个的话前一个会被后一个覆盖（实测第一组整组丢失）。
+% 所以关键词与 JEL 合并成一个块。
+\begin{keyword}
+factor crowding \sep{} factor decay \sep{} comomentum \sep{} margin financing \sep{} China \sep{} A-share market \sep{} G12
+\end{keyword}
+
+\end{frontmatter}
+
+% ============================================================
+\section{Introduction}
+
+A factor that attracts too much capital should, in the end, stop working. Arbitrage is
+limited, so capital flows into a strategy until the mispricing it exploits is gone, and the
+trades most exposed to a reversal are the crowded ones
+\citep{shleifer1997limits,delong1990noise,stein2009presidential,barberis2003style}. What is
+not settled is the measurement: positions are unobserved, and the returns that would reveal
+them are contaminated by the price pressure crowding is supposed to create.
+
+\citet{lou2022comomentum} propose a way around this. If many arbitrageurs hold the same
+stocks, those stocks should comove beyond what common factors explain. Their
+\emph{comomentum} measure, the average pairwise correlation of three-factor residual
+returns within the stocks a momentum strategy trades, forecasts lower momentum returns,
+higher volatility and more negative skewness. It is indirect by construction: it infers
+positioning from second moments for want of anything better.
+
+We ask whether that inference survives where an alternative is observable. China's A-share
+market combines a distinct margin-financing institution with tighter short-sale eligibility
+than the setting in which comomentum was developed. We therefore compare the return-
+correlation proxy with a balance-based proxy rather than treating either one as a definitive
+measure of crowding.
+
+That comparison is the point. A correlation-based proxy and a balance-based proxy can
+produce different predictive results, making the interpretation of any single proxy difficult.
+We construct both for six style factors over 2015--2025 on the full A-share cross-section;
+the initial universe includes delisted firms. The two measures have limited linear
+comovement and give different answers about predictability: the margin-balance proxy is
+negatively associated with subsequent factor returns, whereas comomentum is not robustly
+predictive.
+
+The first concerns a mechanical component of balance changes. A balance-based change
+measure, $\Delta MB_{i,t}/MV_{i,t}$, contains information about the balance level, which is
+related to market capitalisation and factor membership. We therefore control for the level
+throughout. The comparison between specifications A and C is a diagnostic for this mechanical
+component, not proof that all measurement error has been removed.
+
+The second concerns factor momentum. Factors that performed well may attract financing,
+so crowding and past factor returns can move together. We separate them by orthogonalising
+the proxy against the factor's past 1-, 6- and 12-month returns, including both variables
+simultaneously, and estimating factor-specific time-series regressions. Factor fixed effects
+ensure that the pooled coefficient is identified from within-factor variation rather than
+persistent differences in average crowding.
+
+The third concerns inference. The formation window is twelve months but we sample it monthly,
+so adjacent observations share eleven twelfths of their data. We therefore report pooled
+circular-shift permutation p-values with the same estimator used for the observed statistic.
+
+The paper contributes to two literatures. To the literature on factor crowding and decay
+\citep{mclean2016does,beck2016will,lou2022comomentum}, it adds a measurement comparison
+under a different arbitrage regime. The return-correlation and financing-balance proxies
+span six factors and are evaluated within the same market. To the literature on China's
+margin trading \citep{bian2026drivers,xing2026pmo}, it adds a factor-level association
+between financing balances and subsequent factor returns. The contribution is the
+measurement comparison and its inferential design, not a claim that either proxy directly
+observes total investor positions.
+
+\section{Data and methodology}
+% ============================================================
+
+\subsection{Data}
+
+We use the full A-share cross-section from January 2015 to December 2025. Daily prices,
+trading volumes, turnover, and point-in-time valuation ratios are from Baostock; the
+universe includes delisted firms. The sample covers 5{,}247 stocks over 2{,}674 trading days.
+Individual-stock margin-financing balances, covering the designated margin-eligible list, are
+from the Shanghai and Shenzhen exchanges.
+
+We treat the raw margin date as an occurrence date and impose a conservative next-trading-day
+availability rule. The common month-end signal is formed only from balances available by that
+date; the resulting audit has no observations available after the signal date. The valuation
+ratios are treated as point-in-time fields based on the multi-stock audit documented in the
+replication materials.
+
+We exclude stocks that are suspended, have been listed fewer than 180 days, or are flagged
+ST, and we drop financial firms using the available industry classification. Within the
+monthly cross-section we additionally drop stock-months with more than ten non-trading days,
+and we apply the same rule when forming the decile legs that define the crowding measures.
+The margin-eligible list expands materially over the sample. We therefore construct factor
+portfolios on the full cross-section rather than within the eligible pool, and compute the
+margin-balance proxy only over constituent stocks, with coverage controls for the changing
+eligible universe.
+
+\subsection{Two measures of crowding}
+
+\paragraph{Indirect: comomentum.}
+Following \citet{lou2022comomentum}, for each factor $f$ and month $t$ we take the long and short
+deciles formed on $f$'s exposure at $t$, regress each constituent's daily returns over the
+trailing 250 trading days on a three-factor benchmark constructed from the cleaned universe,
+and compute the average pairwise correlation of the residual returns within each leg. The
+measure is the average across the two legs. It is a return-correlation proxy, not an
+account-level holdings measure. Because each leg is capped at 100 randomly selected stocks
+when necessary, it is also a sampled pairwise-correlation measure; the sampling seed is
+fixed for replication.
+
+\paragraph{Margin-financing-balance proxy.}
+For each constituent we compute the monthly change in the publicly reported margin-financing--
+balance scaled by float market capitalisation, $\Delta MB_{i,t}/MV_{i,t}$, and aggregate to
+the leg level using float-capitalisation weights. The measure is the long-leg aggregate minus
+the short-leg aggregate. We also retain the long leg separately, the aggregate margin level,
+and the portfolio's margin coverage. The raw balance date is treated as an occurrence date;
+under the exchange disclosure rules, the previous trading day's information is published
+before the next trading session, so we use the next trading day as a conservative availability
+date. This proxy is more directly observed than comomentum, but it is not a pure financing
+flow, an account-level position, or a causal measure of crowding.
+
+\subsection{Empirical design}
+
+For each measure $C_{f,t}$ and horizon $h \in \{1,3,6,12\}$ we estimate
+\begin{equation}
+R^{f}_{t \to t+h} \;=\; \alpha_f \;+\; \beta\, C_{f,t} \;+\; \gamma' X_{f,t} \;+\; \varepsilon_{f,t},
+\end{equation}
+where $R^{f}_{t\to t+h}$ is the horizon sum of the next $h$ monthly long-short returns,
+starting in $t+1$ (we report compound-return sensitivity separately), $\alpha_f$ is a
+factor fixed effect, and $X$ collects the factor's own past 1-, 6-, and 12-month returns,
+the margin level, and the portfolio's margin coverage. Standard errors are Newey-West with
+six lags. Because the six factors share a market shock within a month, factor-level clustering
+is not reliable with so few clusters, and we do not rely on it.
+
+Our central concern is that $\beta$ reflects factor momentum rather than crowding. We
+address it three ways: by orthogonalising $C_{f,t}$ against the factor's own past 1-,
+6-, and 12-month returns and re-running the regression on the residual; by including
+crowding and past returns simultaneously; and by estimating the regression separately for
+each factor, which asks whether the sign is common or driven by one factor.
+
+Finally, because the formation window is twelve months but sampling is monthly, adjacent
+observations share eleven twelfths of their data. For each permutation we shift the measure
+within factor and re-estimate the same pooled specification, preserving factor fixed effects,
+controls, the sample, and the HAC procedure. We use the finite-permutation correction
+$(1+B_{\geq})/(1+B)$ for the reported $p$-values and treat them as the primary inferential
+quantities; HAC $p$-values are shown for comparison.
+
+We validate the correction rather than assert it. On synthetic panels with no crowding
+effect by construction, across three independent draws the revised pooled permutation
+procedure provides a calibration check; the complete calibration output and seeds are in the
+replication materials. Since a null result is only informative if the design has power, we
+also compute minimum detectable effects by block bootstrap, injecting known effects into the
+actual panel and recording the rejection rate at the permutation critical value.
+
+The primary evidence family is the two proxies crossed with Layers 1 and 3 and horizons
+$h\in\{1,3,6\}$. Horizon 12, factor-specific regressions, tail analysis, second-moment
+diagnostics, and robustness splits are auxiliary. We use finite pooled circular-shift
+permutation p-values for the primary family and report HAC statistics for comparison.
+
+% ============================================================
+\section{Results}
+
+\subsection{The two measures of crowding are only weakly related}
+
+The two measures have limited linear comovement, although this alone does not establish that
+they identify distinct economic objects. Table~\ref{tab:corr} reports the within-factor
+correlation between comomentum and the margin-balance proxy. It ranges from $-0.29$ for
+turnover to $+0.27$ for size, and is near zero for low-volatility. Pooling the six factors
+and removing factor-specific means leaves $-0.11$. These correlations are descriptive and
+may also reflect timing, coverage, nonlinear dependence, or sampling noise.
+
+\begin{table}[t]\centering
+\caption{Comomentum and margin crowding: correlation by factor}
+\label{tab:corr}
+\resizebox{\textwidth}{!}{\input{tables/table1_corr.tex}}
+\end{table}
+
+\begin{figure}[t]\centering
+% 图尚未生成时也要能编译：pipeline 跑完 08 后会把图放到 figures/
+\IfFileExists{figures/fig_crowding_series.pdf}{%
+  \includegraphics[width=\textwidth]{figures/fig_crowding_series.pdf}%
+}{%
+  \fbox{\parbox{0.9\textwidth}{\centering Figure 1 unavailable}}
+}
+\caption{The two crowding measures by factor, monthly, three-month rolling mean.
+Comomentum (blue, left axis) is the average pairwise correlation of three-factor residual
+returns within the factor's long and short legs. Margin crowding (red, right axis) is the
+float-weighted change in margin financing balances on the long leg less the short leg,
+scaled by float market capitalisation. Dotted vertical lines mark June 2015 and
+September 2024. The two series are plotted on separate axes because their units differ by
+one to two orders of magnitude.}
+\label{fig:series}
+\end{figure}
+
+\subsection{Margin-balance proxy predicts decay; comomentum does not}
+
+The primary coefficients and finite permutation $p$-values are reported in
+Table~\ref{tab:main}; HAC $t$-statistics are retained in the replication outputs. Comomentum
+has no robust predictive association with subsequent factor returns in this sample and design:
+permutation $p$-values run from $0.30$ to $0.95$, and the point estimates change sign across
+horizons. The margin-balance proxy, by contrast, is negatively associated with subsequent
+returns, with the effect remaining after controls are added.
+
+The pattern across specifications is informative. With no controls (column A) the margin-balance
+coefficient is negative but imprecisely estimated. Adding the factor's own past 1-, 6- and
+12-month returns (column B) increases the coefficient's absolute magnitude; at $h=6$,
+$\beta$ is about $-0.034$ and the permutation $p$-value is about $0.010$. Controlling for
+the margin level (C) and coverage (D) leaves the estimates essentially unchanged. This
+comparison diagnoses, but does not eliminate, concerns about the level component of balance
+changes.
+
+\begin{table}[p]
+\centering
+\caption{Crowding and future factor returns}
+\label{tab:main}
+\resizebox{\textwidth}{!}{\input{tables/table2_main.tex}}
+\end{table}
+
+
+
+The magnitude is economically material in this descriptive sense: in specification D at $h=6$,
+a one-standard-deviation increase in the margin-balance proxy accompanies approximately a
+$4.0$ percentage point lower horizon-sum long-short return over six months. This is a
+conditional predictive association, not an estimate of a causal effect.
+
+\subsection{The return-correlation proxy is not merely a failed implementation}
+
+The obvious objection to the previous section is that our implementation of comomentum
+fails, rather than the proxy itself. \citet{lou2022comomentum} also document that comomentum
+forecasts higher realised volatility and more negative skewness. Table~\ref{tab:vol} shows
+some directional consistency in China: the one-month volatility coefficient has permutation
+$p = 0.059$, while the skewness results are not individually significant under the revised
+pooled permutation procedure. This is supportive diagnostic evidence, not a full replication
+or proof that the proxy identifies account-level crowding.
+
+The margin-balance proxy shows a different pattern: it is negatively associated with returns
+and has no reliable relation to the second moments in the primary specifications. The two
+proxies therefore need not be interchangeable. Comomentum tracks residual-return
+comovement, whereas the margin-balance proxy tracks a balance-based financing signal.
+
+\begin{table}[t]
+\centering
+\caption{Crowding and the second moments of factor returns}
+\label{tab:vol}
+\resizebox{\textwidth}{!}{\input{tables/table7_volatility.tex}}
+\end{table}
+
+\subsection{Separating crowding from factor momentum}
+
+Table~\ref{tab:orth} reports the defenses against the interpretation that $\beta$ is factor
+momentum. Orthogonalising the proxy against past returns and the margin level and re-running
+the regression leaves the primary margin-balance association intact. Including the proxy and
+past returns simultaneously gives the same qualitative result. Factor-specific slopes are
+reported as descriptive evidence only; with six factors, they do not provide a reliable
+stand-alone inferential test.
+
+\begin{table}[t]
+\centering
+\caption{Separating crowding from factor momentum}
+\label{tab:orth}
+\resizebox{\textwidth}{!}{\input{tables/table3_orth.tex}}
+\end{table}
+
+\subsection{The effect is in the centre, not the tail}
+
+A natural competitor to the mean-shift story is that the margin-balance proxy raises crash
+risk; in this sample the auxiliary evidence does not establish that pattern. Table~\ref{tab:quantile}
+reports pooled quantile regressions with factor fixed effects, and Table~\ref{tab:tail} compares
+the two crowding groups' distributions. The largest negative coefficients occur near the
+median and upper quantiles, while the left-tail coefficient is not significant under the
+revised procedure. These results are auxiliary and do not constitute a formal test of
+quantile-coefficient equality or a point-in-time crash threshold.
+
+\begin{table}[t]
+\centering
+\caption{Crowding and the distribution of factor returns}
+\label{tab:tail}
+\resizebox{\textwidth}{!}{\input{tables/table4_tail.tex}}
+\end{table}
+
+\begin{table}[t]
+\centering
+\caption{Quantile regressions: does crowding move the tail more than the centre?}
+\label{tab:quantile}
+\resizebox{\textwidth}{!}{\input{tables/table4_quantile.tex}}
+\end{table}
+
+\subsection{Robustness and scope of the null result}
+
+Table~\ref{tab:rob} splits the sample, changes the weighting, and varies the construction
+window. The margin-balance association is weak in 2015--2018 ($p=0.33$), not retained at the
+$0.10$ level in 2019--2021 ($p=0.11$) or 2022--2025 ($p=0.15$), and remains detectable under
+equal weighting ($p=0.008$). It weakens when the balance change is measured over six or
+twenty-four months and for the long leg alone. These results show directional and design
+sensitivity; they should not be described as universal robustness.
+
+Because one of the two results is a null, its informativeness matters. Under the revised
+pooled permutation design, minimum detectable effects from the block bootstrap are about
+$11$--$14$ per cent annualised for comomentum across the reported horizons. The null is
+informative relative to effects above this design-specific detection threshold; it does not
+establish equivalence to zero.
+
+\begin{table}[t]
+\centering
+\caption{Robustness}
+\label{tab:rob}
+\resizebox{\textwidth}{!}{\input{tables/table5_robust.tex}}
+\end{table}
+
+% ============================================================
+\section{Conclusion}
+
+Two proxies for factor crowding, applied to the same factors in the same market, give
+substantially different predictive results. The return-correlation proxy has no robust
+association with subsequent factor returns in this sample and design. The margin-balance
+proxy is negatively associated with subsequent returns after controls for factor momentum,
+the balance level, coverage, factor fixed effects, and pooled circular-shift permutation
+inference. The result is conditional and associational, not a causal estimate or an
+account-level holdings result.
+
+The evidence supports a measurement distinction. Comomentum provides a residual-return
+comovement signal with limited directional evidence in the second-moment diagnostics, while
+the margin-balance proxy provides the stronger return-predictive association. The two proxies
+should therefore be reported side by side rather than treated as interchangeable. The
+subsample and window results show that the association is not universal, and the auxiliary
+tail analysis does not establish disproportionate crash risk.
+
+Trailing-window measures sampled monthly create overlapping observations. The pooled
+circular-shift procedure preserves each factor's measure persistence and re-estimates the
+same specification for every shift; it is the primary inferential procedure here. Future
+work should use historical industry classifications, account- or position-level data, and
+quasi-experimental variation in margin eligibility or disclosure.
+
+\clearpage
+\section*{Author declarations}
+
+\subsection*{Data availability}
+The daily market and valuation data are obtained from Baostock, and the margin-financing
+data are obtained from public exchange disclosures. Redistribution of raw provider data may
+be subject to upstream terms. The analysis code, configuration, evidence manifest, run
+manifest, derived-data documentation, and derived summary outputs will be made available
+with the replication package.
+
+\subsection*{Funding}
+No external funding is reported.
+
+\subsection*{Declaration of competing interests}
+The author declares no competing interests.
+
+\subsection*{Declaration of generative AI use}
+During the preparation of this work, the author used ClawsGO Agent in the ClawsGO Science
+Harness for research assistance and language polishing. The author reviewed and edited the
+content, verified the reported results, and takes full responsibility for the content of the
+published article.
+
+\section*{Acknowledgements}
+The author thanks the ClawsGO Science Harness for research-assistance support. The author is
+responsible for all remaining errors. Code and derived-data documentation will be made
+available with the replication package, subject to the terms of the upstream data providers.
+
+\bibliographystyle{elsarticle-harv}
+\bibliography{references}
+
+\end{document}
+
+% ============================================================
+% 回填 TODO（按顺序执行）
+%
+% 1. 数据节：股票数、交易日数、stock-month 数、两融标的数（2015-01 / 2025-09）
+%    → 来自 reports/data_dictionary.md 与 01_fetch_calendar 的日志
+% 2. Table 1 + Figure 1 → reports/crowding_correlation.csv、fig_crowding_series.png
+% 3. Table 2 → reports/table2_main.csv（含 p_placebo 列，务必一并回填）
+% 4. Table 3 → reports/table3_orthogonalization.csv
+% 5. Table 4 → 10_tail_risk.py 的产出
+% 6. Table 5 → 11_robustness.py 的产出
+% 7. 摘要与结论的最后一句 → reports/gate_2026-11-15_verdict.md
+% 8. 字数核对：FRL 正文 ≤2500 词。用 detex 或 texcount 统计，
+%    注意参考文献、表格、图注通常不计入，但各地编辑口径不同，按最严的口径准备。
+% ============================================================

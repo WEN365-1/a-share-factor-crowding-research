@@ -1,0 +1,36 @@
+# Large upstream datasets and unrelated assets
+data/raw/
+data/clean/panel/
+iccai/
+archives/
+
+# Python and LaTeX build artifacts
+__pycache__/
+*.py[cod]
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.synctex.gz
+*.xdv
+*.pdf
+
+# Runtime state and local controls
+STOP
+data/DONE
+data/.pipeline.lock
+data/CONTROL.json
+*.failed.json
+
+# Local/editor/secret files
+.env
+.env.*
+*.pem
+*.key
+id_rsa*
+.DS_Store
+.vscode/
+.idea/
