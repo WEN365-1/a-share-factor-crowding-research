@@ -61,7 +61,7 @@
 
 ## 五、剩余事项（需用户操作/决策）
 
-1. **GitHub 仓库公开**（或维持 private + 按需提供复现包）：与正文数据声明保持一致。
+1. **GitHub 仓库公开**：✅ 已完成（2026-10-18）。两个仓库（a-share-factor-crowding-research / a-share-factor-crowding-raw-data）均已公开，正文数据声明为公开 URL 版本；raw-data 的 release 资产（784MB + sha256）保持可下载。
 2. 投稿系统字段：关键词 6 个、JEL 单独字段、highlights 单独文件、CRediT 按系统要求重填。
 3. 推荐审稿人 3–5 位。
 4. 云主机与本地的代码/报告差异：本轮全部改动在本机完成，如需云主机保留同步版本，把 code/、paper/、reports/ 同步回去（本机已可整链路重跑，云主机不再必需）。

@@ -230,7 +230,7 @@ H1/H2 的 −0.29、0.33 这类错数，审稿人会读成"粗心"。修完 H1/H
 | H4 compound-return | ✅ 已补跑（h=6 −0.042、h=12 −0.057，p 不变） |
 | H5 AI 工具名 | ✅ 已改 DeepSeek（大语言模型）；工具致谢已删 |
 | H6 图源缺失 | ✅ figures/fig_crowding_series.pdf 已入库；本地干净编译验证 |
-| H7 仓库 private | ⚠ 数据声明已改"available from the corresponding author"；投稿前由用户决定是否公开仓库 |
+| H7 仓库 private | ✅ 两个仓库均已公开（用户 2026-10-18 确认）；数据声明为公开 URL 版本 |
 | H8 因子定义 | ✅ 已加（~100 词） |
 | H9 Table 2 推断统计量 | ✅ Panel B 置换 p 值面板已加 |
 | H10 行业快照 | ✅ 已披露 |
