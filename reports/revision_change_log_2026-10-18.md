@@ -80,3 +80,13 @@
 | 结果 | 17 页 → **13 页**；越界 **0**；字体 Computer Modern → Times 系（TeXGyreTermesX），与发表版 FRL 一致 |
 
 另：尝试抓取 ScienceDirect 上的 FRL 开放获取文章 PDF 用于比对，被反爬拦截（Cloudflare/登录墙），未成功；本机 `final,1p` 模式即 Elsevier 生产排版同款，已按此对齐。
+
+## 七、发表惯例修正轮（2026-10-18 深夜，应用户指正）
+
+| 问题 | 修复 |
+|---|---|
+| 引用格式错误（作者-年份制） | FRL 发表版为**数字编号制**：`authoryear` 选项删除、`elsarticle-num`、正文 6 处引用全部改为数字式（如 "Lou and Polk [5]"）；参考文献表 [1]–[9] 编号齐全 |
+| 表格穿插在参考文献/声明之间 | 结论节前加 `\clearpage`：所有表格在结论之前整体落位（第 4–11 页），参考文献/声明/致谢区不再出现任何表格 |
+| 其他同轮修正 | 地址补国家（Tongji University, Shanghai, China）；Baostock 数据源补网址 |
+
+最终：13 页、0 越界、表格页 4–11、References 12、Declarations 13。
