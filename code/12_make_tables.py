@@ -159,7 +159,7 @@ def table1() -> None:
 # ---------- Table 2：主检验 ----------
 
 def table2() -> None:
-    """主检验拆为三张紧凑表，避免单张三面板表占满一页。"""
+    """主检验：单面板，每格系数（星号）+ 括号内置换 p 值。"""
     p = REPORTS / "table2_main.csv"
     if not p.exists():
         log.warning("缺 table2_main.csv，跳过 Table 2")
@@ -167,38 +167,28 @@ def table2() -> None:
     d = pd.read_csv(p)
     specs = ["A", "B", "C", "D"]
     horizons = sorted(d["horizon"].unique())
-
-    def build(panel: str, title: str, nd: int, stars_on: bool = False) -> str:
-        out = [r"\begin{tabular}{ll" + "c" * len(specs) + "}", r"\toprule",
-               r"\multicolumn{6}{l}{\textit{" + title + r"}} \\",
-               r"Measure & $h$ & " + " & ".join(SPEC_ZH[s] for s in specs) + r" \\",
-               r"\midrule"]
-        for meas in ["comomentum", "crowd_margin"]:
-            sub = d[d["measure"] == meas]
-            for h in horizons:
-                row = sub[sub["horizon"] == h]
-                cells = []
-                for spec in specs:
-                    c = row[row["spec"] == spec]
-                    if c.empty:
-                        cells.append("—")
-                        continue
-                    c = c.iloc[0]
-                    value = num_fixed(c[panel], nd)
-                    cells.append(value + stars(c["p_placebo"]) if stars_on else value)
-                out.append(f"{en(meas)} & {h} & " + " & ".join(cells) + r" \\")
-        if stars_on:
-            out.append(r"\midrule")
-            out.append(notes_row(6))
-        out += [r"\bottomrule", r"\end{tabular}"]
-        return "\n".join(out) + "\n"
-
-    # 合并成双面板单表：系数（星号）+ 置换 p 值（审稿人需要看到推断统计量）
-    pa = build("beta", "Panel A: coefficient (stars from permutation $p$)", 4, True)
-    pb = build("p_placebo", "Panel B: finite permutation $p$-value", 3)
-    body = pa.replace("\\bottomrule", "\\midrule") + "\n" + pb
-    write("table2_main.tex", body)
-    write("table2_t.tex", build("t", "HAC $t$-statistic", 2))
+    out = [r"\begin{tabular}{ll" + "c" * len(specs) + "}", r"\toprule",
+           r"Measure & $h$ & " + " & ".join(SPEC_ZH[s] for s in specs) + r" \\",
+           r"\midrule"]
+    for meas in ["comomentum", "crowd_margin"]:
+        sub = d[d["measure"] == meas]
+        for h in horizons:
+            cells = []
+            for spec in specs:
+                c = sub[(sub["horizon"] == h) & (sub["spec"] == spec)]
+                if c.empty:
+                    cells.append(r"\shortstack{—\\(—)}")
+                    continue
+                c = c.iloc[0]
+                cells.append(r"\shortstack{" + f"{c['beta']:,.4f}" + stars(c["p_placebo"])
+                             + r"\\(" + f"{c['p_placebo']:.3f}" + r")}")
+            out.append(f"{en(meas)} & {h} & " + " & ".join(cells) + r" \\")
+    out += [r"\midrule",
+            notes_row(6, extra=("Each cell reports the coefficient, starred by the finite "
+                                "circular-shift permutation $p$-value, with the permutation "
+                                "$p$-value in parentheses.")),
+            r"\bottomrule", r"\end{tabular}"]
+    write("table2_main.tex", "\n".join(out) + "\n")
 
 
 # ---------- Table 3：三层正交化 ----------
@@ -209,13 +199,28 @@ def table3() -> None:
         log.warning("缺 table3_orthogonalization.csv，跳过 Table 3")
         return
     d = pd.read_csv(p)
+    # Layer 2 的逐因子行只作方向性参考（正文已说明），不入表；仅保留均值汇总行，
+    # 逐因子明细留在复制输出里，并在表注给出符号分布。
+    l2 = d[d["layer"].str.contains("②因子内时序回归", na=False)]
+    d = d[~d["layer"].str.contains("②因子内时序回归", na=False)]
+    l2_note = ""
+    for meas in ["crowd_margin", "comomentum"]:
+        g = l2[l2["measure"] == meas]
+        if len(g):
+            neg = int((g["beta"] < 0).sum())
+            sig = int(((g["beta"] < 0) & (g["p_placebo"] < 0.10)).sum())
+            l2_note += (f"{en(meas)} factor-specific slopes are negative for {neg}/6 "
+                        f"factors ({sig} significant at the 10\\% level); ")
     out = [r"\begin{tabular}{llcccc}", r"\toprule",
            r"Measure & Layer & $h$ & $\beta$ & HAC $t$ & Perm. $p$ \\", r"\midrule"]
     for _, r in d.iterrows():
         pv = r.get("p_placebo")
         out.append(f"{en(r['measure'])} & {en(r['layer'])} & {r['horizon']} & "
                    f"{num_fixed(r['beta'],4)}{stars(pv)} & {num_fixed(r['t'],2)} & {num_fixed(pv,3)} \\\\")
-    out += [r"\midrule", notes_row(6), r"\bottomrule", r"\end{tabular}"]
+    out += [r"\midrule",
+            notes_row(6, extra=("Layer 2 reports cross-factor mean slopes; " + l2_note
+                                + "factor-level rows are in the replication outputs.")),
+            r"\bottomrule", r"\end{tabular}"]
     write("table3_orth.tex", "\n".join(out) + "\n")
 
 
@@ -247,33 +252,60 @@ def table4() -> None:
     write("table4_tail.tex", "\n".join(out) + "\n", size=r"\footnotesize")
 
 
-# ---------- Table 4b：分位数回归 ----------
+# ---------- Table 7：分布分析（分位数回归 + 高低拥挤组对比，两张合并为一张） ----------
 
-def table4q() -> None:
-    p = REPORTS / "table4_quantile.csv"
-    if not p.exists():
-        log.warning("缺 table4_quantile.csv，跳过 Table 4b")
+def table7dist() -> None:
+    pq = REPORTS / "table4_quantile.csv"
+    pt = REPORTS / "table4_tail.csv"
+    if not pq.exists() or not pt.exists():
+        log.warning("缺 table4_quantile.csv 或 table4_tail.csv，跳过 Table 7")
         return
-    d = pd.read_csv(p)
-    qs = sorted(d["quantile"].unique())
-    out = [r"\begin{tabular}{l" + "c" * len(qs) + "}", r"\toprule",
-           r"Measure & " + " & ".join(f"$q={q:.2f}$" for q in qs) + r" \\", r"\midrule"]
-    for meas in d["measure"].unique():
-        sub = d[d["measure"] == meas]
+    dq = pd.read_csv(pq)
+    qs = sorted(dq["quantile"].unique())
+    pa = [r"\begin{tabular}{l" + "c" * len(qs) + "}", r"\toprule",
+          r"\multicolumn{" + str(1 + len(qs)) + r"}{l}{\textit{Panel A: pooled quantile regressions (coefficients)}} \\",
+          r"Measure & " + " & ".join(f"$q={q:.2f}$" for q in qs) + r" \\", r"\midrule"]
+    for meas in dq["measure"].unique():
+        sub = dq[dq["measure"] == meas]
         row = {r["quantile"]: r for _, r in sub.iterrows()}
         cells = [f"{num(row[q]['coef'],4)}{stars(row[q]['p_placebo'])}" if q in row else "—"
                  for q in qs]
-        out.append(f"{en(meas)} & " + " & ".join(cells) + r" \\")
-    out.append(r"\midrule")
-    out.append(r"\multicolumn{" + str(1 + len(qs)) + r"}{l}{\textit{Permutation $p$-values}} \\")
-    for meas in d["measure"].unique():
-        sub = d[d["measure"] == meas]
+        pa.append(f"{en(meas)} & " + " & ".join(cells) + r" \\")
+    pa.append(r"\midrule")
+    pa.append(r"\multicolumn{" + str(1 + len(qs)) + r"}{l}{\textit{Permutation $p$-values}} \\")
+    for meas in dq["measure"].unique():
+        sub = dq[dq["measure"] == meas]
         row = {r["quantile"]: r for _, r in sub.iterrows()}
-        out.append(f"{en(meas)} & "
-                   + " & ".join(num(row[q]["p_placebo"], 3) if q in row else "—" for q in qs)
-                   + r" \\")
-    out += [r"\bottomrule", r"\end{tabular}"]
-    write("table4_quantile.tex", "\n".join(out) + "\n")
+        pa.append(f"{en(meas)} & "
+                  + " & ".join(num(row[q]["p_placebo"], 3) if q in row else "—" for q in qs)
+                  + r" \\")
+    pa += [r"\bottomrule", r"\end{tabular}"]
+
+    dt = pd.read_csv(pt)
+    cols = [("均值", "Mean"), ("标准差", "SD"), ("偏度", "Skew."),
+            ("峰度", "Kurt."), ("崩溃频率", "Crash freq.")]
+    pb = [r"\begin{tabular}{lll" + "c" * len(cols) + "}", r"\toprule",
+          r"\multicolumn{" + str(3 + len(cols)) + r"}{l}{\textit{Panel B: high versus low crowding groups' distributions}} \\",
+          r"Measure & Factor & Crowding & " + " & ".join(c[1] for c in cols) + r" \\",
+          r"\midrule"]
+    for meas in dt["measure"].unique():
+        sub = dt[dt["measure"] == meas]
+        for i, (_, r) in enumerate(sub.iterrows()):
+            for j, side in enumerate(["高拥挤_", "低拥挤_"]):
+                lab = en(meas) if (i == 0 and j == 0) else ""
+                pb.append(f"{lab} & {en(r['factor'])} & "
+                          f"{'High' if j == 0 else 'Low'} & "
+                          + " & ".join(num(r[side + c[0]], 4 if c[0] in ("均值", "标准差") else 2)
+                                       for c in cols) + r" \\")
+        pb.append(r"\midrule")
+    pb[-1] = notes_row(3 + len(cols),
+                       extra="Panel A reports pooled quantile regressions with factor fixed "
+                             "effects; Panel B compares the distributions of the two crowding "
+                             "groups.")
+    pb += [r"\bottomrule", r"\end{tabular}"]
+
+    body = "\n".join(pa) + "\n\n" + "\n".join(pb)
+    write("table7_dist.tex", body, size=r"\footnotesize")
 
 
 # ---------- Table 7：拥挤度对实现波动/偏度的预测 ----------
@@ -341,7 +373,9 @@ def table6() -> None:
     out = [r"\begin{tabular}{llllcccc}", r"\toprule",
            r"Panel & Measure & Return leg & $h$ & $\beta$ & HAC $t$ & Perm. $p$ & $N$ \\",
            r"\midrule"]
-    pa = d[d["analysis"] == "leg decomposition (same RHS)"]
+    # Panel A：同 RHS 精确分解（comomentum 只保留 h=6，h=1 与正文"无腿级模式"一句对应）
+    pa = d[(d["analysis"] == "leg decomposition (same RHS)")
+           & ~((d["measure"] == "comomentum") & (d["horizon"] == 1))]
     for (meas, h), g in pa.groupby(["measure", "horizon"], sort=False):
         for i, (_, r) in enumerate(g.iterrows()):
             out.append(f"{'A' if i == 0 else ''} & {en(meas)} & {en(r['group'])} & {int(h)} & "
@@ -354,21 +388,13 @@ def table6() -> None:
             out.append(f"{'B' if i == 0 else ''} & {en(meas)} & {en(r['group'])} & {int(h)} & "
                        f"{num_fixed(r['beta'],4)}{stars(r['p_placebo'])} & {num_fixed(r['t'],2)} & "
                        f"{num_fixed(r['p_placebo'],3)} & {int(r['n'])} \\\\")
-    out.append(r"\midrule")
-    pc = d[d["analysis"] == "cross-leg measure"]
-    for (meas, h), g in pc.groupby(["measure", "horizon"], sort=False):
-        for i, (_, r) in enumerate(g.iterrows()):
-            out.append(f"{'C' if i == 0 else ''} & {en(meas)} & {en(r['group'])} & {int(h)} & "
-                       f"{num_fixed(r['beta'],4)}{stars(r['p_placebo'])} & {num_fixed(r['t'],2)} & "
-                       f"{num_fixed(r['p_placebo'],3)} & {int(r['n'])} \\\\")
     out += [r"\midrule",
             notes_row(8, extra=("Panel A regresses each leg's horizon-sum return on the "
                                 "total margin-balance or comomentum measure, with the "
                                 "identical controls and sample as specification D, so the "
                                 "long-short coefficient equals the long-leg coefficient "
                                 "minus the short-leg coefficient. Panel B pairs each leg's "
-                                "return with that leg's own financing measure; Panel C "
-                                "pairs legs across sides.")),
+                                "return with that leg's own financing measure.")),
             r"\bottomrule", r"\end{tabular}"]
     write("table6_legs.tex", "\n".join(out) + "\n", size=r"\footnotesize", sep="2pt")
 
@@ -422,7 +448,7 @@ def figures() -> None:
 
 def main() -> None:
     log.info(f"生成论文图表 | 北京时间 {now_local():%Y-%m-%d %H:%M:%S}")
-    table1(); table2(); table3(); table4(); table4q(); table5(); table6(); table7(); table8()
+    table1(); table2(); table3(); table5(); table6(); table7dist(); table7(); table8()
     figures()
     heartbeat("12 图表生成结束", log)
 
