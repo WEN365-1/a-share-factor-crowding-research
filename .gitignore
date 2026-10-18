@@ -37,3 +37,6 @@ id_rsa*
 
 # MakeIndex artifacts
 *.spl
+
+# Manuscript and submission files (kept local; not published before acceptance)
+paper/
