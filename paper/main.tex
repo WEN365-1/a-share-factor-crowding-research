@@ -8,9 +8,10 @@
 % ============================================================
 % 注意：elsarticle 的引用样式由**文档类选项**控制，光设 \bibliographystyle 不够——
 % 不加 authoryear 的话引用会渲染成数字编号，而正文里是按作者-年份写的，会前后不一致。
-\documentclass[preprint,12pt,authoryear]{elsarticle}
+\documentclass[final,1p,authoryear]{elsarticle}
 
 \usepackage{amsmath,amssymb}
+\usepackage{newtxtext,newtxmath}
 \usepackage{xcolor}
 % 工作稿里批注的中文要能显示，故用 xelatex + xeCJK 编译。
 % 投稿稿去掉全部中文批注后，用 pdflatex 也能编译。
@@ -24,6 +25,8 @@
 \usepackage{threeparttable}
 \usepackage{adjustbox}
 \usepackage[hidelinks]{hyperref}
+\usepackage{xurl}
+\emergencystretch=1em
 
 
 \journal{Finance Research Letters}
@@ -205,7 +208,7 @@ dependence, or sampling noise.
 \begin{table}[t]\centering
 \caption{Comomentum and margin crowding: correlation by factor}
 \label{tab:corr}
-\resizebox{\textwidth}{!}{\input{tables/table1_corr.tex}}
+\input{tables/table1_corr.tex}
 \end{table}
 
 \begin{figure}[t]\centering
@@ -241,11 +244,10 @@ $p=0.010$). Controlling for the margin level (C) and coverage (D) leaves the est
 essentially unchanged, diagnosing but not eliminating concerns about the level component of
 balance changes.
 
-\begin{table}[p]
-\centering
+\begin{table}[t]\centering
 \caption{Crowding and future factor returns}
 \label{tab:main}
-\resizebox{\textwidth}{!}{\input{tables/table2_main.tex}}
+\input{tables/table2_main.tex}
 \end{table}
 
 
@@ -272,7 +274,7 @@ intensity rather than a fragile spread artifact. Comomentum shows no leg-level p
 \begin{table}[t]\centering
 \caption{Leg decomposition of the crowding association}
 \label{tab:legs}
-\resizebox{\textwidth}{!}{\input{tables/table6_legs.tex}}
+\input{tables/table6_legs.tex}
 \end{table}
 
 \subsection{Flows versus stocks}
@@ -293,7 +295,7 @@ capture partly distinct signals.
 \begin{table}[t]\centering
 \caption{Financing flows versus balance changes}
 \label{tab:flow}
-\resizebox{\textwidth}{!}{\input{tables/table8_flow.tex}}
+\input{tables/table8_flow.tex}
 \end{table}
 
 \subsection{The return-correlation proxy is not merely a failed implementation}
@@ -314,7 +316,7 @@ financing signal.
 \centering
 \caption{Crowding and the second moments of factor returns}
 \label{tab:vol}
-\resizebox{\textwidth}{!}{\input{tables/table7_volatility.tex}}
+\input{tables/table7_volatility.tex}
 \end{table}
 
 \subsection{Separating crowding from factor momentum}
@@ -330,7 +332,7 @@ stand-alone test.
 \centering
 \caption{Separating crowding from factor momentum}
 \label{tab:orth}
-\resizebox{\textwidth}{!}{\input{tables/table3_orth.tex}}
+\input{tables/table3_orth.tex}
 \end{table}
 
 \subsection{The effect is in the centre, not the tail}
@@ -347,14 +349,14 @@ threshold.
 \centering
 \caption{Crowding and the distribution of factor returns}
 \label{tab:tail}
-\resizebox{\textwidth}{!}{\input{tables/table4_tail.tex}}
+\input{tables/table4_tail.tex}
 \end{table}
 
 \begin{table}[t]
 \centering
 \caption{Quantile regressions: does crowding move the tail more than the centre?}
 \label{tab:quantile}
-\resizebox{\textwidth}{!}{\input{tables/table4_quantile.tex}}
+\input{tables/table4_quantile.tex}
 \end{table}
 
 \subsection{Robustness and scope of the null result}

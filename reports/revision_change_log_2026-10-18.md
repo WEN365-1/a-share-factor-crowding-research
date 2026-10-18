@@ -66,3 +66,17 @@
 3. 推荐审稿人 3–5 位。
 4. 云主机与本地的代码/报告差异：本轮全部改动在本机完成，如需云主机保留同步版本，把 code/、paper/、reports/ 同步回去（本机已可整链路重跑，云主机不再必需）。
 5. 投稿前通读一遍定稿 PDF（拼写/语法检查尚未做）。
+
+---
+
+## 六、排版轮（2026-10-18 晚，应用户反馈）
+
+| 变更 | 说明 |
+|---|---|
+| 文档类 | `preprint,12pt` → `final,1p`（Elsevier 出版系统同款单栏版式；Times 字体 via newtx） |
+| 表格 | 全部去掉 `\resizebox` 强制拉宽：按自然宽度居中，窄表不再被吹大；表 1/4/5/6 用小号字，列距 2–2.5pt；仅 Table 5（唯一真宽表）保留一次缩放 |
+| Notes 行 | 改为可换行段落盒（原单行超长文本越界 1300pt 的元凶） |
+| URL | 加 xurl 断行支持；`\emergencystretch=1em` |
+| 结果 | 17 页 → **13 页**；越界 **0**；字体 Computer Modern → Times 系（TeXGyreTermesX），与发表版 FRL 一致 |
+
+另：尝试抓取 ScienceDirect 上的 FRL 开放获取文章 PDF 用于比对，被反爬拦截（Cloudflare/登录墙），未成功；本机 `final,1p` 模式即 Elsevier 生产排版同款，已按此对齐。

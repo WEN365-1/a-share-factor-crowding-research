@@ -49,8 +49,8 @@ EN = {
     "own-leg measure": "Own-leg measure, own-leg return",
     "cross-leg measure": "Cross-leg measure",
     "long-short": "Long-short", "long": "Long leg", "short": "Short leg",
-    "long->short": "Long measure $\\rightarrow$ short leg",
-    "short->long": "Short measure $\\rightarrow$ long leg",
+    "long->short": "Long measure $\\rightarrow$ short leg".replace("measure $\\rightarrow$", "$\\rightarrow$"),
+    "short->long": "Short measure $\\rightarrow$ long leg".replace("measure $\\rightarrow$", "$\\rightarrow$"),
     # 因子名
     "POOLED": "Pooled", "POOLED(因子内去均值)": "Pooled (factor-demeaned)",
     # Table 3 的层名
@@ -92,6 +92,15 @@ def esc(s: str) -> str:
     return s
 
 
+def notes_row(ncols: int, extra: str = "") -> str:
+    """Notes 行：放在可换行的段落盒里（长文本不越界），统一星号口径说明。"""
+    star = ("Stars use finite circular-shift permutation $p$-values; "
+            "* $p<0.10$, ** $p<0.05$, *** $p<0.01$.")
+    text = (extra + " " + star) if extra else star
+    return (r"\multicolumn{" + str(ncols) + r"}{l}{\parbox{\dimexpr\textwidth-10pt\relax}"
+            r"{\footnotesize Notes: " + text + r"}} \\")
+
+
 def stars(p) -> str:
     if pd.isna(p):
         return ""
@@ -115,11 +124,13 @@ def num_fixed(x, nd: int) -> str:
     return num(x, nd)
 
 
-def write(name: str, body: str) -> None:
+def write(name: str, body: str, size: str = r"\small", sep: str = "2.5pt") -> None:
     TABDIR.mkdir(parents=True, exist_ok=True)
-    # 统一表格字号与宽度；长标签用可伸缩列，避免投稿 PDF 出现整表越界。
+    # 表格按自然宽度排版（不用 resizebox 拉满行宽：小表会被吹大、大表被压小）；
+    # 宽表用更小字号或更小列距。
     if name.startswith("table"):
-        body = "\\begingroup\\small\\setlength{\\tabcolsep}{3pt}\n" + body + "\n\\endgroup"
+        body = ("\\begingroup" + size + "\\setlength{\\tabcolsep}{" + sep + "}\n"
+                + body + "\n\\endgroup")
     (TABDIR / name).write_text(body, encoding="utf-8")
     log.info(f"写出 paper/tables/{name}")
 
@@ -132,8 +143,8 @@ def table1() -> None:
         log.warning("缺 crowding_correlation.csv，跳过 Table 1")
         return
     d = pd.read_csv(p)
-    lines = [r"\begin{tabular}{lcccccc}", r"\toprule",
-             r"Factor & $N$ & Pearson & Spearman & Mean comomentum & Mean margin-balance proxy & \\",
+    lines = [r"\begin{tabular}{lccccc}", r"\toprule",
+             r"Factor & $N$ & Pearson & Spearman & Mean comomentum & Mean margin-balance proxy \\",
              r"\midrule"]
     for _, r in d.iterrows():
         f = r["factor"]
@@ -142,7 +153,7 @@ def table1() -> None:
                      f"{num(r['spearman'],3)} & {num(r['comomentum_mean'],5)} & "
                      f"{num(r['crowd_mean'],4)} \\\\")
     lines += [r"\bottomrule", r"\end{tabular}"]
-    write("table1_corr.tex", "\n".join(lines) + "\n")
+    write("table1_corr.tex", "\n".join(lines) + "\n", size=r"\footnotesize")
 
 
 # ---------- Table 2：主检验 ----------
@@ -178,7 +189,7 @@ def table2() -> None:
                 out.append(f"{en(meas)} & {h} & " + " & ".join(cells) + r" \\")
         if stars_on:
             out.append(r"\midrule")
-            out.append(r"\multicolumn{6}{l}{\footnotesize Notes: Stars use finite circular-shift permutation $p$-values; * $p<0.10$, ** $p<0.05$, *** $p<0.01$.} \\")
+            out.append(notes_row(6))
         out += [r"\bottomrule", r"\end{tabular}"]
         return "\n".join(out) + "\n"
 
@@ -204,9 +215,7 @@ def table3() -> None:
         pv = r.get("p_placebo")
         out.append(f"{en(r['measure'])} & {en(r['layer'])} & {r['horizon']} & "
                    f"{num_fixed(r['beta'],4)}{stars(pv)} & {num_fixed(r['t'],2)} & {num_fixed(pv,3)} \\\\")
-    out += [r"\midrule",
-            r"\multicolumn{6}{l}{\footnotesize Notes: Stars use finite circular-shift permutation $p$-values; * $p<0.10$, ** $p<0.05$, *** $p<0.01$.} \\",
-            r"\bottomrule", r"\end{tabular}"]
+    out += [r"\midrule", notes_row(6), r"\bottomrule", r"\end{tabular}"]
     write("table3_orth.tex", "\n".join(out) + "\n")
 
 
@@ -235,7 +244,7 @@ def table4() -> None:
         out.append(r"\midrule")
     out[-1] = r"\bottomrule"
     out.append(r"\end{tabular}")
-    write("table4_tail.tex", "\n".join(out) + "\n")
+    write("table4_tail.tex", "\n".join(out) + "\n", size=r"\footnotesize")
 
 
 # ---------- Table 4b：分位数回归 ----------
@@ -297,9 +306,7 @@ def table7() -> None:
                     cells.append(f"{num_fixed(r['beta'],4)}{stars(r['p_placebo'])}" if panel == "beta"
                                  else num(r["p_placebo"], 3))
                 out.append(f"{en(meas)} & {h} & " + " & ".join(cells) + r" \\")
-    out += [r"\midrule",
-            r"\multicolumn{4}{l}{\footnotesize Notes: Stars use finite circular-shift permutation $p$-values; * $p<0.10$, ** $p<0.05$, *** $p<0.01$.} \\",
-            r"\bottomrule", r"\end{tabular}"]
+    out += [r"\midrule", notes_row(4), r"\bottomrule", r"\end{tabular}"]
     write("table7_volatility.tex", "\n".join(out) + "\n")
 
 
@@ -319,10 +326,8 @@ def table5() -> None:
         out.append(f"{en(r['检验'])} & {en(r['分组'])} & {en(r['测度'])} & "
                    f"{num_fixed(r['beta'],4)}{stars(pv)} & {num_fixed(r['t'],2)} & {num_fixed(pv,3)} & "
                    f"{int(r['n'])} \\\\")
-    out += [r"\midrule",
-            r"\multicolumn{7}{l}{\footnotesize Notes: Stars use finite circular-shift permutation $p$-values; * $p<0.10$, ** $p<0.05$, *** $p<0.01$.} \\",
-            r"\bottomrule", r"\end{tabular}"]
-    write("table5_robust.tex", "\n".join(out) + "\n")
+    out += [r"\midrule", notes_row(7), r"\bottomrule", r"\end{tabular}"]
+    write("table5_robust.tex", "\n".join(out) + "\n", size=r"\footnotesize")
 
 
 # ---------- Table 6：腿分解（16 产出 table8_legs.csv） ----------
@@ -357,9 +362,15 @@ def table6() -> None:
                        f"{num_fixed(r['beta'],4)}{stars(r['p_placebo'])} & {num_fixed(r['t'],2)} & "
                        f"{num_fixed(r['p_placebo'],3)} & {int(r['n'])} \\\\")
     out += [r"\midrule",
-            r"\multicolumn{8}{l}{\footnotesize Notes: Panel A regresses each leg's horizon-sum return on the total margin-balance or comomentum measure, with the identical controls and sample as specification D, so the long-short coefficient equals the long-leg coefficient minus the short-leg coefficient. Panel B pairs each leg's return with that leg's own financing measure; Panel C pairs legs across sides. Stars use finite circular-shift permutation $p$-values; * $p<0.10$, ** $p<0.05$, *** $p<0.01$.} \\",
+            notes_row(8, extra=("Panel A regresses each leg's horizon-sum return on the "
+                                "total margin-balance or comomentum measure, with the "
+                                "identical controls and sample as specification D, so the "
+                                "long-short coefficient equals the long-leg coefficient "
+                                "minus the short-leg coefficient. Panel B pairs each leg's "
+                                "return with that leg's own financing measure; Panel C "
+                                "pairs legs across sides.")),
             r"\bottomrule", r"\end{tabular}"]
-    write("table6_legs.tex", "\n".join(out) + "\n")
+    write("table6_legs.tex", "\n".join(out) + "\n", size=r"\footnotesize", sep="2pt")
 
 
 # ---------- Table 8：流量型代理（18 产出 table11_flow_proxy.csv） ----------
@@ -380,7 +391,12 @@ def table8() -> None:
                        f"{num_fixed(r['beta'],4)}{stars(r['p_placebo'])} & {num_fixed(r['t'],2)} & "
                        f"{num_fixed(r['p_placebo'],3)} & {int(r['n'])} \\\\")
         out.append(r"\midrule" if meas != d["measure"].unique()[-1] else "")
-    out += [r"\multicolumn{6}{l}{\footnotesize Notes: Both measures are leg-level float-weighted monthly financing intensities (long leg minus short leg) with specification-D controls and the measure's own trailing twelve-month mean as an additional level control; net flows are available for Shanghai only. Stars use finite circular-shift permutation $p$-values; * $p<0.10$, ** $p<0.05$, *** $p<0.01$.} \\",
+    out += [r"\midrule",
+            notes_row(6, extra=("Both measures are leg-level float-weighted monthly "
+                                "financing intensities (long leg minus short leg) with "
+                                "specification-D controls and the measure's own trailing "
+                                "twelve-month mean as an additional level control; net "
+                                "flows are available for Shanghai only.")),
             r"\bottomrule", r"\end{tabular}"]
     write("table8_flow.tex", "\n".join(out) + "\n")
 
