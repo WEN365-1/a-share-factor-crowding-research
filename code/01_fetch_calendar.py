@@ -12,10 +12,11 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 import pandas as pd
 import baostock as bs
 
-sys.path.insert(0, "/home/user/金融科研1014/code")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (CLEAN, CFG, Gate, META, bs_login_ok, get_logger, load_config,  # noqa: E402
                     write_parquet, now_local)
 

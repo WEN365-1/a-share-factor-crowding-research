@@ -2,6 +2,6 @@ Highlights
 
 • Compares return-correlation and margin-balance crowding proxies.
 • Tests six A-share style factors over 2015–2025.
-• Margin-balance crowding shows a conditional negative return association.
+• Margin-balance crowding predicts lower factor returns, via the low-side leg.
 • Comomentum is not robustly linked to subsequent factor returns.
 • Pooled permutation inference addresses overlapping formation windows.

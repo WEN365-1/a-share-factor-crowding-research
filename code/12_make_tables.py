@@ -26,11 +26,11 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, "/home/user/金融科研1014/code")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import REPORTS, get_logger, heartbeat, now_local  # noqa: E402
 
 log = get_logger("12_tables", "12_make_tables.log")
-PAPER = Path("/home/user/金融科研1014/paper")
+PAPER = Path(__file__).resolve().parent.parent / "paper"
 TABDIR = PAPER / "tables"
 FIGDIR = PAPER / "figures"
 
@@ -43,6 +43,14 @@ EN = {
     "comomentum": "Comomentum",
     "crowd_margin": "Margin-balance proxy",
     "crowd_margin_long": "Margin-balance proxy, long leg",
+    "crowd_flow_buy": "Financing purchases (buy flow)",
+    "crowd_flow_net": "Net financing flows (SSE)",
+    "leg decomposition (same RHS)": "Total measure, identical controls",
+    "own-leg measure": "Own-leg measure, own-leg return",
+    "cross-leg measure": "Cross-leg measure",
+    "long-short": "Long-short", "long": "Long leg", "short": "Short leg",
+    "long->short": "Long measure $\\rightarrow$ short leg",
+    "short->long": "Short measure $\\rightarrow$ long leg",
     # 因子名
     "POOLED": "Pooled", "POOLED(因子内去均值)": "Pooled (factor-demeaned)",
     # Table 3 的层名
@@ -60,6 +68,8 @@ EN = {
     "两融余额 6 个月变化": "Balance change, 6 months",
     "两融余额 24 个月变化": "Balance change, 24 months",
     "仅多头端（中国两融高度不对称）": "Long leg only",
+    "仅空头端": "Short leg only",
+    "crowd_margin_short": "Margin-balance proxy, short leg",
     # Table 4 的高低分组
     "高拥挤_": "High crowd.", "低拥挤_": "Low crowd.",
     "均值": "Mean", "标准差": "SD", "偏度": "Skew.", "峰度": "Kurt.", "崩溃频率": "Crash freq.",
@@ -172,9 +182,12 @@ def table2() -> None:
         out += [r"\bottomrule", r"\end{tabular}"]
         return "\n".join(out) + "\n"
 
-    write("table2_main.tex", build("beta", "Coefficient (stars from permutation $p$)", 4, True))
+    # 合并成双面板单表：系数（星号）+ 置换 p 值（审稿人需要看到推断统计量）
+    pa = build("beta", "Panel A: coefficient (stars from permutation $p$)", 4, True)
+    pb = build("p_placebo", "Panel B: finite permutation $p$-value", 3)
+    body = pa.replace("\\bottomrule", "\\midrule") + "\n" + pb
+    write("table2_main.tex", body)
     write("table2_t.tex", build("t", "HAC $t$-statistic", 2))
-    write("table2_p.tex", build("p_placebo", "Finite permutation $p$-value", 3))
 
 
 # ---------- Table 3：三层正交化 ----------
@@ -312,6 +325,66 @@ def table5() -> None:
     write("table5_robust.tex", "\n".join(out) + "\n")
 
 
+# ---------- Table 6：腿分解（16 产出 table8_legs.csv） ----------
+
+def table6() -> None:
+    p = REPORTS / "table8_legs.csv"
+    if not p.exists():
+        log.warning("缺 table8_legs.csv，跳过 Table 6")
+        return
+    d = pd.read_csv(p)
+    out = [r"\begin{tabular}{llllcccc}", r"\toprule",
+           r"Panel & Measure & Return leg & $h$ & $\beta$ & HAC $t$ & Perm. $p$ & $N$ \\",
+           r"\midrule"]
+    pa = d[d["analysis"] == "leg decomposition (same RHS)"]
+    for (meas, h), g in pa.groupby(["measure", "horizon"], sort=False):
+        for i, (_, r) in enumerate(g.iterrows()):
+            out.append(f"{'A' if i == 0 else ''} & {en(meas)} & {en(r['group'])} & {int(h)} & "
+                       f"{num_fixed(r['beta'],4)}{stars(r['p_placebo'])} & {num_fixed(r['t'],2)} & "
+                       f"{num_fixed(r['p_placebo'],3)} & {int(r['n'])} \\\\")
+    out.append(r"\midrule")
+    pb = d[d["analysis"] == "own-leg measure"]
+    for (meas, h), g in pb.groupby(["measure", "horizon"], sort=False):
+        for i, (_, r) in enumerate(g.iterrows()):
+            out.append(f"{'B' if i == 0 else ''} & {en(meas)} & {en(r['group'])} & {int(h)} & "
+                       f"{num_fixed(r['beta'],4)}{stars(r['p_placebo'])} & {num_fixed(r['t'],2)} & "
+                       f"{num_fixed(r['p_placebo'],3)} & {int(r['n'])} \\\\")
+    out.append(r"\midrule")
+    pc = d[d["analysis"] == "cross-leg measure"]
+    for (meas, h), g in pc.groupby(["measure", "horizon"], sort=False):
+        for i, (_, r) in enumerate(g.iterrows()):
+            out.append(f"{'C' if i == 0 else ''} & {en(meas)} & {en(r['group'])} & {int(h)} & "
+                       f"{num_fixed(r['beta'],4)}{stars(r['p_placebo'])} & {num_fixed(r['t'],2)} & "
+                       f"{num_fixed(r['p_placebo'],3)} & {int(r['n'])} \\\\")
+    out += [r"\midrule",
+            r"\multicolumn{8}{l}{\footnotesize Notes: Panel A regresses each leg's horizon-sum return on the total margin-balance or comomentum measure, with the identical controls and sample as specification D, so the long-short coefficient equals the long-leg coefficient minus the short-leg coefficient. Panel B pairs each leg's return with that leg's own financing measure; Panel C pairs legs across sides. Stars use finite circular-shift permutation $p$-values; * $p<0.10$, ** $p<0.05$, *** $p<0.01$.} \\",
+            r"\bottomrule", r"\end{tabular}"]
+    write("table6_legs.tex", "\n".join(out) + "\n")
+
+
+# ---------- Table 8：流量型代理（18 产出 table11_flow_proxy.csv） ----------
+
+def table8() -> None:
+    p = REPORTS / "table11_flow_proxy.csv"
+    if not p.exists():
+        log.warning("缺 table11_flow_proxy.csv，跳过 Table 8")
+        return
+    d = pd.read_csv(p)
+    d = d[d["analysis"] == "flow proxy"]
+    out = [r"\begin{tabular}{llcccc}", r"\toprule",
+           r"Measure & $h$ & $\beta$ & HAC $t$ & Perm. $p$ & $N$ \\", r"\midrule"]
+    for meas in d["measure"].unique():
+        sub = d[d["measure"] == meas].sort_values("horizon")
+        for i, (_, r) in enumerate(sub.iterrows()):
+            out.append(f"{en(meas)} & {int(r['horizon'])} & "
+                       f"{num_fixed(r['beta'],4)}{stars(r['p_placebo'])} & {num_fixed(r['t'],2)} & "
+                       f"{num_fixed(r['p_placebo'],3)} & {int(r['n'])} \\\\")
+        out.append(r"\midrule" if meas != d["measure"].unique()[-1] else "")
+    out += [r"\multicolumn{6}{l}{\footnotesize Notes: Both measures are leg-level float-weighted monthly financing intensities (long leg minus short leg) with specification-D controls and the measure's own trailing twelve-month mean as an additional level control; net flows are available for Shanghai only. Stars use finite circular-shift permutation $p$-values; * $p<0.10$, ** $p<0.05$, *** $p<0.01$.} \\",
+            r"\bottomrule", r"\end{tabular}"]
+    write("table8_flow.tex", "\n".join(out) + "\n")
+
+
 # ---------- 图片导出 ----------
 
 def figures() -> None:
@@ -333,7 +406,7 @@ def figures() -> None:
 
 def main() -> None:
     log.info(f"生成论文图表 | 北京时间 {now_local():%Y-%m-%d %H:%M:%S}")
-    table1(); table2(); table3(); table4(); table4q(); table5(); table7()
+    table1(); table2(); table3(); table4(); table4q(); table5(); table6(); table7(); table8()
     figures()
     heartbeat("12 图表生成结束", log)
 

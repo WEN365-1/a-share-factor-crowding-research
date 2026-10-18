@@ -21,10 +21,11 @@ from __future__ import annotations
 
 import gc
 import sys
+from pathlib import Path
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, "/home/user/金融科研1014/code")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import CLEAN, CFG, Gate, MARGIN, REPORTS, get_logger, heartbeat, now_local, read_parquet, write_parquet  # noqa: E402
 
 log = get_logger("08_crowding", "08_crowding.log")

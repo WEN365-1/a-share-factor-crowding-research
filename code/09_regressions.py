@@ -24,11 +24,13 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import statsmodels.api as sm
 
-sys.path.insert(0, "/home/user/金融科研1014/code")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (CLEAN, CFG, REPORTS, get_logger, hac_ols, heartbeat, now_local,  # noqa: E402
                     placebo_pvalue, read_parquet)
 

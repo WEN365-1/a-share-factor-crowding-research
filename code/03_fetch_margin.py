@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import sys
+from pathlib import Path
 import time
 import pandas as pd
 import akshare as ak
@@ -24,7 +25,7 @@ import warnings
 
 warnings.filterwarnings("ignore")
 
-sys.path.insert(0, "/home/user/金融科研1014/code")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (CLEAN, CFG, MARGIN, Gate, Progress, get_logger, heartbeat,  # noqa: E402
                     read_parquet, unit_path, write_parquet)
 

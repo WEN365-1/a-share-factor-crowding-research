@@ -11,10 +11,12 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, "/home/user/金融科研1014/code")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (CLEAN, MARGIN, REPORTS, get_logger, hac_ols, heartbeat, now_local,  # noqa: E402
                     placebo_pvalue, read_parquet)
 
@@ -205,6 +207,14 @@ def main() -> None:
             beta, t, p, pp, n = fit(d, "crowd_margin_long")
             rows.append({"检验": "测度变体", "分组": "仅多头端（中国两融高度不对称）",
                          "测度": "crowd_margin_long",
+                         "beta": beta, "t": t, "p": p, "p_placebo": pp, "n": n})
+        # 对称检验：仅空头端。crowd_margin = v_long - v_short，故 v_short = v_long - crowd_margin。
+        df["crowd_margin_short"] = df["crowd_margin_long"] - df["crowd_margin"]
+        d = df.dropna(subset=["crowd_margin_short", "fwd1"])
+        if len(d) >= 40:
+            beta, t, p, pp, n = fit(d, "crowd_margin_short")
+            rows.append({"检验": "测度变体", "分组": "仅空头端",
+                         "测度": "crowd_margin_short",
                          "beta": beta, "t": t, "p": p, "p_placebo": pp, "n": n})
 
     t5 = pd.DataFrame(rows)

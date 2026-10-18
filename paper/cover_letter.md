@@ -1,6 +1,6 @@
 # Cover letter
 
-Date: October 17, 2026
+Date: October 18, 2026
 
 To: The Editor-in-Chief
 Finance Research Letters
@@ -25,10 +25,12 @@ an indirect return-correlation proxy for six style factors over 2015--2025, and 
 produce different predictive results. The return-correlation proxy has no robust association
 with subsequent factor returns under pooled circular-shift permutation inference. The
 margin-balance proxy is conditionally negatively associated with subsequent returns after
-controls for factor momentum, balance levels, coverage, and factor fixed effects. The
-association is strongest in the primary pooled specifications, while subsample and window
-results show meaningful sensitivity. We present the result as a measurement comparison, not
-as an account-level holdings measure or a causal estimate.
+controls for factor momentum, balance levels, coverage, and factor fixed effects. A leg
+decomposition shows the association is concentrated in the low-side leg, whose own financing
+intensity predicts its own decay; publicly reported financing flows (purchases, and net
+flows for Shanghai) predict similarly and retain independent content; and the two proxies
+act as independent signals rather than complementary ones. We present the result as a
+measurement comparison, not as an account-level holdings measure or a causal estimate.
 
 The two measures correlate weakly and with inconsistent signs across factors, which is why
 we report them side by side rather than choosing between them.
@@ -54,10 +56,11 @@ associational.
 
 ## Declarations
 
-All authors have approved the submission. The manuscript is original and is not under
+The author has approved the submission. The manuscript is original and is not under
 consideration elsewhere. Data availability: the code, configuration, evidence manifest, run
-manifest, derived-data documentation, and derived summary outputs will be made available;
-raw provider data will be retrieved from the upstream sources subject to their terms.
+manifest, derived-data documentation, and derived summary outputs are publicly available at
+https://github.com/WEN365-1/a-share-factor-crowding-research, with raw provider data
+documented in a companion repository and subject to the providers' terms.
 Competing interests: the author declares no competing interests. Funding: no external
 funding is reported. No preprint has been posted. The manuscript includes the required
 generative-AI disclosure in accordance with the journal's policy.

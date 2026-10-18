@@ -25,7 +25,7 @@ import pandas as pd
 from pathlib import Path
 
 ROOT = Path(os.environ.get("FIN_ROOT", "/tmp/finsmoke"))
-sys.path.insert(0, "/home/user/金融科研1014/code")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import CLEAN, DATA, MARGIN, RAW, ensure_dirs, write_parquet  # noqa: E402
 
 # 种子可用环境变量覆盖：判断某个结果是真模式还是这一抽的偶然，换种子重跑是最直接的办法。

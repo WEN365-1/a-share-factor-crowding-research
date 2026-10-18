@@ -31,14 +31,14 @@ import numpy as np
 import pandas as pd
 from scipy.stats import norm
 
-sys.path.insert(0, "/home/user/金融科研1014/code")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (REPORTS, get_logger, hac_ols, heartbeat, now_local,  # noqa: E402
                     placebo_null_dist)
 
 log = get_logger("13_power", "13_power.log")
 
 # 复用 09 的面板构造，保证功效分析与主检验用的是同一个样本、同一套变量
-_spec = importlib.util.spec_from_file_location("r09", "/home/user/金融科研1014/code/09_regressions.py")
+_spec = importlib.util.spec_from_file_location("r09", str(Path(__file__).resolve().parent / "09_regressions.py"))
 R09 = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(R09)
 

@@ -19,13 +19,14 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 import gc
 import shutil
 import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
 
-sys.path.insert(0, "/home/user/金融科研1014/code")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (CLEAN, CFG, DAILY, DATA, Gate, REPORTS, get_logger,  # noqa: E402
                     heartbeat, read_parquet, write_parquet, now_local)
 

@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pandas as pd
 
-sys.path.insert(0, "/home/user/金融科研1014/code")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import CFG, CLEAN, DAILY, MARGIN, read_parquet  # noqa: E402
 
 
