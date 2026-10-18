@@ -203,6 +203,7 @@ def table3() -> None:
     # 逐因子明细留在复制输出里，并在表注给出符号分布。
     l2 = d[d["layer"].str.contains("②因子内时序回归", na=False)]
     d = d[~d["layer"].str.contains("②因子内时序回归", na=False)]
+    d = d[d["horizon"] != 12]   # h=12 为辅助口径，正文不引用，留复制输出
     l2_note = ""
     for meas in ["crowd_margin", "comomentum"]:
         g = l2[l2["measure"] == meas]
@@ -448,7 +449,7 @@ def figures() -> None:
 
 def main() -> None:
     log.info(f"生成论文图表 | 北京时间 {now_local():%Y-%m-%d %H:%M:%S}")
-    table1(); table2(); table3(); table5(); table6(); table7dist(); table7(); table8()
+    table2(); table3(); table5(); table6(); table8()
     figures()
     heartbeat("12 图表生成结束", log)
 
