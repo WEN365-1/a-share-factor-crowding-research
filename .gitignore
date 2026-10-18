@@ -34,3 +34,6 @@ id_rsa*
 .DS_Store
 .vscode/
 .idea/
+
+# MakeIndex artifacts
+*.spl
