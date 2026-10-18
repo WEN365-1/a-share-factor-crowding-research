@@ -60,7 +60,8 @@ The author has approved the submission. The manuscript is original and is not un
 consideration elsewhere. Data availability: the code, configuration, evidence manifest, run
 manifest, derived-data documentation, and derived summary outputs are publicly available at
 https://github.com/WEN365-1/a-share-factor-crowding-research, with raw provider data
-documented in a companion repository and subject to the providers' terms.
+documented at https://github.com/WEN365-1/a-share-factor-crowding-raw-data and subject to
+the providers' terms.
 Competing interests: the author declares no competing interests. Funding: no external
 funding is reported. No preprint has been posted. The manuscript includes the required
 generative-AI disclosure in accordance with the journal's policy.
