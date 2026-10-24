@@ -11,9 +11,10 @@
 口径与 08/11 完全一致：
   - T+1 可用性（calendar 下一交易日）
   - 月度取数：月度内最后一个可用交易日的日度流量**求和**（流量是期间量，不是时点量）
-  - 十分位归属：与 11 相同的 monthly.parquet 规则（n_days>=10、qcut、因子列）
+  - 十分位归属：与 11 相同的 monthly.parquet 形成月非交易日规则、qcut、因子列
   - 腿聚合：流通市值加权
-  - 推断：spec D 控制 + 因子固定效应 + NW(6) + 循环平移安慰剂（同 16.fit_row）
+  - 推断：spec D 控制 + 因子固定效应；h=12 用 NW(12)，其余用 NW(6)；
+    循环平移安慰剂使用相同滞后阶数（同 16.fit_row）
 
 产出：reports/table11_flow_proxy.csv
 """
@@ -24,10 +25,11 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pyarrow.parquet as pq
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import (CLEAN, MARGIN, REPORTS, get_logger, hac_ols, heartbeat,  # noqa: E402
-                    placebo_pvalue, read_parquet)
+from common import (CLEAN, MARGIN, REPORTS, formation_universe, get_logger, hac_ols,  # noqa: E402
+                    heartbeat, placebo_pvalue, read_parquet)
 
 log = get_logger("18_flow", "18_flow_proxy.log")
 FACTORS = ["VAL", "SMB", "MOM", "QMJ", "LOWVOL", "TURN"]
@@ -36,14 +38,41 @@ HORIZONS = [1, 3, 6, 12]
 MOM_CTRL = ["past1", "past6", "past12"]
 
 
+def read_margin_flow_file(fp: Path) -> pd.DataFrame:
+    """买入列必需；偿还列单独读取，允许深交所文件没有 fin_repay。"""
+    schema_names = set(pq.read_schema(fp).names)
+    required = {"date", "code", "fin_buy", "exchange"}
+    missing = required.difference(schema_names)
+    if missing:
+        raise ValueError(f"{fp} 缺少必需流量字段: {sorted(missing)}")
+    buy = pd.read_parquet(fp, columns=["date", "code", "fin_buy", "exchange"])
+    if "fin_repay" not in schema_names:
+        buy["fin_repay"] = np.nan
+        return buy
+    repay = pd.read_parquet(fp, columns=["date", "code", "fin_repay"])
+    return buy.merge(repay, on=["date", "code"], how="left", validate="one_to_one")
+
+
+def aggregate_flow_monthly(mg: pd.DataFrame) -> pd.DataFrame:
+    """月度流量求和；全缺失偿还额保持 NaN，净流量不会被误算成买入额。"""
+    g = mg.groupby(["code", "ym"], observed=True)
+    fl = g.agg(fin_buy_sum=("fin_buy", lambda s: s.sum(min_count=1)),
+               fin_repay_sum=("fin_repay", lambda s: s.sum(min_count=1)),
+               n_days_flow=("date", "nunique")).reset_index()
+    fl["fin_net_sum"] = np.where(fl["fin_repay_sum"].notna(),
+                                 fl["fin_buy_sum"] - fl["fin_repay_sum"], np.nan)
+    return fl
+
+
 def fit_row(d: pd.DataFrame, cols: list[str], measure: str, y: str,
             meta: dict) -> dict | None:
-    d = d.dropna(subset=cols + [y]).copy()
+    d = d.dropna(subset=cols + [y]).sort_values(["ym", "factor"]).copy()
     if len(d) < 40:
         return None
-    r = hac_ols(d[y].to_numpy(), d[cols].to_numpy(), cols)
-    pp, _ = placebo_pvalue(d, cols, measure, y, r[measure]["t"])
-    row = {"measure": measure.replace("_z", ""), "beta": r[measure]["coef"],
+    lags = 12 if meta.get("horizon") == 12 else 6
+    r = hac_ols(d[y].to_numpy(), d[cols].to_numpy(), cols, lags=lags)
+    pp, _ = placebo_pvalue(d, cols, measure, y, r[measure]["t"], hac_lags=lags)
+    row = {"measure": measure.replace("_z", ""), "hac_lags": lags, "beta": r[measure]["coef"],
            "se": r[measure]["se"], "t": r[measure]["t"], "p": r[measure]["p"],
            "p_placebo": pp, "n": r["_n"]}
     row.update(meta)
@@ -56,12 +85,11 @@ def build_flow_panel() -> pd.DataFrame:
     files = sorted(MARGIN.rglob("*.parquet"))
     parts = []
     for fp in files:
-        try:
-            x = pd.read_parquet(fp, columns=["date", "code", "fin_buy", "fin_repay", "exchange"])
-        except Exception:  # noqa: BLE001
-            continue
+        x = read_margin_flow_file(fp)
         if len(x):
             parts.append(x)
+    if not parts:
+        raise ValueError("没有可读取的融资买入流量数据")
     mg = pd.concat(parts, ignore_index=True)
     mg["date"] = pd.to_datetime(mg["date"])
     mg["code"] = mg["code"].astype(str)
@@ -74,19 +102,21 @@ def build_flow_panel() -> pd.DataFrame:
     mg["available_date"] = mg["date"].map(next_day)
     mg = mg.dropna(subset=["available_date"])
     mg["ym"] = mg["available_date"].dt.to_period("M")
-    # 流量是期间量：按月对可用交易日求和（净流量仅 SSE 可算，SZSE 记为 NaN）
-    g = mg.groupby(["code", "ym"], observed=True)
-    fl = g.agg(fin_buy_sum=("fin_buy", "sum"),
-               fin_repay_sum=("fin_repay", "sum"),
-               n_days_flow=("date", "nunique")).reset_index()
-    fl["fin_net_sum"] = np.where(fl["fin_repay_sum"].notna(),
-                                 fl["fin_buy_sum"] - fl["fin_repay_sum"], np.nan)
+    # 流量是期间量；偿还额必须 min_count=1，避免深交所全 NaN 被聚合为零。
+    fl = aggregate_flow_monthly(mg)
+    coverage = (mg.groupby(["exchange", "ym"], observed=True)
+                  .agg(stock_months=("code", "size"), stocks=("code", "nunique"),
+                       buy_observations=("fin_buy", "count"),
+                       repay_observations=("fin_repay", "count")).reset_index())
+    coverage["buy_coverage"] = coverage["buy_observations"] / coverage["stock_months"]
+    coverage["repay_coverage"] = coverage["repay_observations"] / coverage["stock_months"]
+    coverage.to_csv(REPORTS / "flow_exchange_coverage.csv", index=False, encoding="utf-8-sig")
 
-    # ---------- 2. 十分位归属（与 11 相同规则） ----------
+    # ---------- 2. 十分位归属（与 06/08/11 相同规则） ----------
     monthly = read_parquet(CLEAN / "monthly.parquet")
     monthly["ym"] = pd.PeriodIndex(monthly["ym"], freq="M")
-    monthly2 = monthly[["ym", "code", "float_mv", "n_days"] + FACTORS].copy()
-    monthly2 = monthly2[monthly2["n_days"] >= 10].copy()
+    monthly2 = monthly[["ym", "code", "float_mv", "n_days", "calendar_days", "isST"] + FACTORS].copy()
+    monthly2 = formation_universe(monthly2)
     monthly2["ym"] = monthly2["ym"].astype(str)
     fl["ym"] = fl["ym"].astype(str)
     mm = monthly2.merge(fl, on=["code", "ym"], how="left")
@@ -151,12 +181,12 @@ def build_flow_panel() -> pd.DataFrame:
     df = fr.merge(cr, on=["ym", "factor"], how="inner").merge(cw, on=["ym", "factor"], how="left")
     for c in ["comomentum", "crowd_margin", "crowd_flow_buy", "crowd_flow_net",
               "crowd_flow_buy_level", "crowd_flow_net_level",
-              "level_margin", "cover_long"]:
+              "level_margin", "cover_long", "cover_short"]:
         if c in df.columns:
             df[c + "_z"] = (df[c] - df[c].mean()) / df[c].std()
     fe = pd.get_dummies(df["factor"], prefix="FE", drop_first=True).astype(float)
     df = pd.concat([df, fe], axis=1)
-    return df
+    return df.sort_values(["ym", "factor"]).copy()
 
 
 def main() -> None:
@@ -164,7 +194,7 @@ def main() -> None:
     log.info(f"流量代理面板：{len(df)} 行；crowd_flow_buy 非空 {df['crowd_flow_buy'].notna().sum()} 行，"
              f"crowd_flow_net 非空 {df['crowd_flow_net'].notna().sum()} 行")
     ctrl = ([x for x in df.columns if x.startswith("FE_")] + MOM_CTRL
-            + ["level_margin_z", "cover_long_z"])
+            + ["level_margin_z", "cover_long_z", "cover_short_z"])
     rows = []
 
     # 1) 单测度主回归（水平控制用流量自身 12 个月均值；净流量另加 SSE 口径说明）

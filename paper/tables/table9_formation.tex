@@ -1,0 +1,33 @@
+\begingroup\footnotesize\setlength{\tabcolsep}{2pt}
+\begin{tabular}{lllcccc}
+\toprule
+Variant & Measure & $h$ & $\beta$ & HAC $t$ & Perm. $p$ & $N$ \\
+\midrule
+Frozen-weight daily legs & Comomentum & 1 & 0.0034 & 0.98 & 0.364 & 699 \\
+ & Comomentum & 3 & 0.0102 & 1.56 & 0.371 & 687 \\
+ & Comomentum & 6 & 0.0196 & 2.01 & 0.284 & 669 \\
+ & Comomentum & 12 & -0.0107 & -0.58 & 0.646 & 633 \\
+Frozen-weight daily legs & Margin-balance proxy & 1 & -0.0188** & -3.47 & 0.019 & 699 \\
+ & Margin-balance proxy & 3 & -0.0333*** & -4.17 & 0.010 & 687 \\
+ & Margin-balance proxy & 6 & -0.0521*** & -4.35 & 0.010 & 669 \\
+ & Margin-balance proxy & 12 & -0.0575** & -2.60 & 0.021 & 633 \\
+Common month-end (partial) & Comomentum & 1 & 0.0037 & 1.02 & 0.308 & 699 \\
+ & Comomentum & 3 & 0.0105 & 1.57 & 0.362 & 687 \\
+ & Comomentum & 6 & 0.0204 & 2.08 & 0.265 & 669 \\
+ & Comomentum & 12 & -0.0098 & -0.53 & 0.667 & 633 \\
+Common month-end (partial) & Margin-balance proxy & 1 & -0.0189** & -3.42 & 0.019 & 699 \\
+ & Margin-balance proxy & 3 & -0.0339*** & -4.22 & 0.010 & 687 \\
+ & Margin-balance proxy & 6 & -0.0525*** & -4.39 & 0.010 & 669 \\
+ & Margin-balance proxy & 12 & -0.0578** & -2.61 & 0.021 & 633 \\
+Raw realisations incl. ST days & Comomentum & 6 & 0.0208 & 2.11 & 0.265 & 669 \\
+Raw realisations incl. ST days & Margin-balance proxy & 6 & -0.0524*** & -4.32 & 0.010 & 669 \\
+Terminal 0\% stress & Comomentum & 6 & 0.0208 & 2.10 & 0.265 & 669 \\
+Terminal 0\% stress & Margin-balance proxy & 6 & -0.0524*** & -4.32 & 0.010 & 669 \\
+Terminal -100\% stress & Comomentum & 6 & 0.0208 & 2.11 & 0.265 & 669 \\
+Terminal -100\% stress & Margin-balance proxy & 6 & -0.0522*** & -4.32 & 0.010 & 669 \\
+\midrule
+\multicolumn{7}{l}{\parbox{\dimexpr\textwidth-10pt\relax}{\footnotesize Notes: Specification-D estimates; production estimates are in the main return table. Past-return controls and forward outcomes are recomputed from each return series. The daily-leg variant compounds available frozen-weight contributions. The partial common-month-end variant changes membership and returns but retains production crowding and coverage controls. Raw realisations retain subsequent ST trading days. Terminal scenarios apply only to unobserved in-holding-month terminal events and are not estimated payoffs; all horizons are in the accompanying regression CSV. Stars use finite circular-shift permutation $p$-values; * $p<0.10$, ** $p<0.05$, *** $p<0.01$.}} \\
+\bottomrule
+\end{tabular}
+
+\endgroup

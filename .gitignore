@@ -17,6 +17,14 @@ __pycache__/
 *.synctex.gz
 *.xdv
 *.pdf
+!paper/main.pdf
+!paper/figures/
+!paper/figures/*.pdf
+
+# Route B: no stand-alone provider-derived datasets without specific permission
+data/
+reports/*.csv
+reports/*.json
 
 # Runtime state and local controls
 STOP
@@ -34,9 +42,3 @@ id_rsa*
 .DS_Store
 .vscode/
 .idea/
-
-# MakeIndex artifacts
-*.spl
-
-# Manuscript and submission files (kept local; not published before acceptance)
-paper/

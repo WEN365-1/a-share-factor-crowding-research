@@ -1,0 +1,7 @@
+Highlights
+
+• Compares return-correlation and margin-balance crowding proxies.
+• Tests six A-share style factors over 2015–2025.
+• Margin-balance return associations concentrate in the low-side leg.
+• Comomentum evidence varies by horizon, construction, and factor.
+• Circular-shift inference addresses overlapping rolling windows.

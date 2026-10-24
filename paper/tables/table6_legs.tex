@@ -1,0 +1,25 @@
+\begingroup\footnotesize\setlength{\tabcolsep}{2pt}
+\begin{tabular}{llllcccc}
+\toprule
+Panel & Measure & Return leg & $h$ & $\beta$ & HAC $t$ & Perm. $p$ & $N$ \\
+\midrule
+A & Comomentum & Long-short & 6 & 0.0208 & 2.11 & 0.265 & 669 \\
+ & Comomentum & Long leg & 6 & 0.0052 & 0.62 & 0.696 & 669 \\
+ & Comomentum & Short leg & 6 & -0.0156 & -1.28 & 0.608 & 669 \\
+A & Margin-balance proxy & Long-short & 1 & -0.0190** & -3.44 & 0.019 & 699 \\
+ & Margin-balance proxy & Long leg & 1 & -0.0020 & -0.64 & 0.533 & 699 \\
+ & Margin-balance proxy & Short leg & 1 & 0.0170** & 3.45 & 0.019 & 699 \\
+A & Margin-balance proxy & Long-short & 6 & -0.0524*** & -4.32 & 0.010 & 669 \\
+ & Margin-balance proxy & Long leg & 6 & 0.0003 & 0.03 & 0.990 & 669 \\
+ & Margin-balance proxy & Short leg & 6 & 0.0527*** & 4.40 & 0.010 & 669 \\
+\midrule
+B & Margin-balance proxy, long leg & Long leg & 1 & -0.0093* & -1.91 & 0.093 & 699 \\
+B & Margin-balance proxy, short leg & Short leg & 1 & -0.0253*** & -4.03 & 0.009 & 699 \\
+B & Margin-balance proxy, long leg & Long leg & 6 & -0.0184 & -1.61 & 0.196 & 669 \\
+B & Margin-balance proxy, short leg & Short leg & 6 & -0.0608** & -3.96 & 0.020 & 669 \\
+\midrule
+\multicolumn{8}{l}{\parbox{\dimexpr\textwidth-10pt\relax}{\footnotesize Notes: Panel A regresses each leg's horizon-sum return on the total margin-balance or comomentum measure, with the identical controls and sample as specification D, so the long-short coefficient equals the long-leg coefficient minus the short-leg coefficient. Panel B pairs each leg's return with that leg's own financing measure. Stars use finite circular-shift permutation $p$-values; * $p<0.10$, ** $p<0.05$, *** $p<0.01$.}} \\
+\bottomrule
+\end{tabular}
+
+\endgroup

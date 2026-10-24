@@ -190,6 +190,25 @@ def table2() -> None:
             r"\bottomrule", r"\end{tabular}"]
     write("table2_main.tex", "\n".join(out) + "\n")
 
+    # 未直接放入短正文的推断附表也必须由同一份 CSV 重建，避免旧结果残留。
+    for field, title, nd, name in [
+        ("t", "HAC $t$-statistic", 2, "table2_t.tex"),
+        ("p_placebo", "Finite permutation $p$-value", 3, "table2_p.tex"),
+    ]:
+        inference = [r"\begin{tabular}{llcccc}", r"\toprule",
+                     rf"\multicolumn{{6}}{{l}}{{\textit{{{title}}}}} \\",
+                     r"Measure & $h$ & A & B & C & D \\", r"\midrule"]
+        for meas in ["comomentum", "crowd_margin"]:
+            sub = d[d["measure"] == meas]
+            for h in horizons:
+                cells = []
+                for spec in specs:
+                    c = sub[(sub["horizon"] == h) & (sub["spec"] == spec)]
+                    cells.append("—" if c.empty else num_fixed(c.iloc[0][field], nd))
+                inference.append(f"{en(meas)} & {h} & " + " & ".join(cells) + r" \\")
+        inference += [r"\bottomrule", r"\end{tabular}"]
+        write(name, "\n".join(inference) + "\n")
+
 
 # ---------- Table 3：三层正交化 ----------
 
@@ -281,6 +300,7 @@ def table7dist() -> None:
                   + " & ".join(num(row[q]["p_placebo"], 3) if q in row else "—" for q in qs)
                   + r" \\")
     pa += [r"\bottomrule", r"\end{tabular}"]
+    write("table4_quantile.tex", "\n".join(pa) + "\n")
 
     dt = pd.read_csv(pt)
     cols = [("均值", "Mean"), ("标准差", "SD"), ("偏度", "Skew."),
@@ -428,6 +448,51 @@ def table8() -> None:
     write("table8_flow.tex", "\n".join(out) + "\n")
 
 
+# ---------- 形成期与收益实现稳健性（26/27 产出） ----------
+
+def table_formation() -> None:
+    p = REPORTS / "formation_robustness_regressions.csv"
+    if not p.exists():
+        log.warning("缺 formation_robustness_regressions.csv，跳过形成期稳健性表")
+        return
+    d = pd.read_csv(p)
+    labels = {"daily_leg_buy_hold": "Frozen-weight daily legs",
+              "common_month_end_partial": "Common month-end (partial)"}
+    d = d[d["variant"].isin(labels)]
+    terminal_path = REPORTS / "terminal_return_regressions.csv"
+    terminal_labels = {"raw_realized": "Raw realisations incl. ST days",
+                       "terminal_zero_stress": r"Terminal 0\% stress",
+                       "terminal_total_loss_stress": r"Terminal -100\% stress"}
+    if terminal_path.exists():
+        terminal = pd.read_csv(terminal_path)
+        terminal = terminal[terminal["variant"].isin(terminal_labels)
+                            & terminal["horizon"].eq(6)]
+        d = pd.concat([d, terminal], ignore_index=True)
+        labels.update(terminal_labels)
+    out = [r"\begin{tabular}{lllcccc}", r"\toprule",
+           r"Variant & Measure & $h$ & $\beta$ & HAC $t$ & Perm. $p$ & $N$ \\",
+           r"\midrule"]
+    for variant in labels:
+        for meas in ["comomentum", "crowd_margin"]:
+            sub = d[(d["variant"] == variant) & (d["measure"] == meas)].sort_values("horizon")
+            for i, (_, r) in enumerate(sub.iterrows()):
+                out.append(f"{labels[variant] if i == 0 else ''} & {en(meas)} & {int(r['horizon'])} & "
+                           f"{num_fixed(r['beta'],4)}{stars(r['p_placebo'])} & {num_fixed(r['t'],2)} & "
+                           f"{num_fixed(r['p_placebo'],3)} & {int(r['n'])} \\\\")
+    out += [r"\midrule",
+            notes_row(7, extra=("Specification-D estimates; production estimates are in the main "
+                                "return table. Past-return controls and forward outcomes are "
+                                "recomputed from each return series. The daily-leg variant compounds "
+                                "available frozen-weight contributions. The partial common-month-end "
+                                "variant changes membership and returns but retains production crowding "
+                                "and coverage controls. Raw realisations retain subsequent ST trading "
+                                "days. Terminal scenarios apply only to unobserved in-holding-month "
+                                "terminal events and are not estimated payoffs; all horizons are in the "
+                                "accompanying regression CSV.")),
+            r"\bottomrule", r"\end{tabular}"]
+    write("table9_formation.tex", "\n".join(out) + "\n", size=r"\footnotesize", sep="2pt")
+
+
 # ---------- 图片导出 ----------
 
 def figures() -> None:
@@ -449,7 +514,8 @@ def figures() -> None:
 
 def main() -> None:
     log.info(f"生成论文图表 | 北京时间 {now_local():%Y-%m-%d %H:%M:%S}")
-    table2(); table3(); table5(); table6(); table8()
+    table1(); table2(); table3(); table4(); table5(); table6(); table7(); table7dist(); table8()
+    table_formation()
     figures()
     heartbeat("12 图表生成结束", log)
 

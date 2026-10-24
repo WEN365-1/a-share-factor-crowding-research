@@ -15,7 +15,7 @@ universe:
   end: "2025-12-31"
   exchanges: ["sh", "sz"]    # 不含北交所（Baostock 不覆盖）
   # 剔除规则（见 01-Research-Proposal 3.2 节）
-  drop_st: true              # ST / *ST
+  drop_st: true              # 在 06 形成月最后可见快照筛选；不删除历史/持有期 ST 交易日
   min_list_days: 180         # 上市不足 6 个月
   max_suspend_days: 10       # 当月停牌超过 10 个交易日
   drop_financial: true       # 金融行业（银行/非银）—— 两融权重异常，必须剔

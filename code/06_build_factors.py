@@ -9,9 +9,9 @@
   LOWVOL  低波     -过去 60 交易日收益标准差（低波做多）
   TURN    换手     -过去 20 交易日平均换手率（低换手做多）
 
-构造：每月最后一个交易日调仓，按因子值分十分位，**流通市值加权**（不用等权，避免小市值主导）。
+构造：每月最后可见交易快照调仓，按当时 isST 状态和因子值分十分位，流通市值加权。
       多空收益 = 顶部分位的加权收益 － 底部分位的加权收益。
-      权重用 t 月末的流通市值（避免用未来权重）。
+      权重用 t 月末的流通市值（避免用未来权重）；历史与持有期 ST 交易日不删除。
 
 产出：
   data/clean/monthly.parquet        月频截面：每只股票每月的 6 个因子暴露 + 当月/次月收益 + 流通市值
@@ -25,7 +25,8 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import CLEAN, CFG, Gate, REPORTS, get_logger, heartbeat, now_local, write_parquet  # noqa: E402
+from common import (CLEAN, CFG, Gate, REPORTS, formation_universe, get_logger, heartbeat,  # noqa: E402
+                    now_local, realize_leg_return, write_parquet)
 
 log = get_logger("06_factors", "06_build_factors.log")
 
@@ -69,13 +70,18 @@ def main() -> None:
     mret.loc[mret["n_ret"] < mret["n_days_obs"], "mret"] = np.nan
     mret = mret["mret"].rename("mret")
 
-    # 每月最后一个交易日那一行作为截面暴露；同时记录当月实际交易天数，
-    # 用于施加「当月停牌超过 10 个交易日」的剔除规则（见 01-Research-Proposal 3.2 节）
+    # 每月最后一个交易日那一行作为截面暴露；同时记录个股实际交易天数与
+    # 当月交易日历天数，用于施加「非交易日超过 10 天」的统一剔除规则。
     n_days = p.groupby(["code", "ym"], observed=True)["date"].count().rename("n_days")
+    cal = pd.read_parquet(CLEAN / "calendar.parquet", columns=["date"])
+    cal["date"] = pd.to_datetime(cal["date"])
+    cal["ym"] = cal["date"].dt.to_period("M")
+    calendar_days = cal.groupby("ym", observed=True)["date"].nunique().rename("calendar_days")
     last_idx = p.groupby(["code", "ym"], observed=True)["date"].idxmax()
     snap = p.loc[last_idx, ["code", "ym", "date", "close", "float_mv", "turn", "vol60", "turn20",
-                            "peTTM", "pbMRQ", "psTTM", "pcfNcfTTM", "industry"]].copy()
+                            "peTTM", "pbMRQ", "psTTM", "pcfNcfTTM", "industry", "isST"]].copy()
     snap = snap.merge(n_days.reset_index(), on=["code", "ym"], how="left")
+    snap = snap.merge(calendar_days.reset_index(), on=["ym"], how="left")
     snap = snap.merge(mret.reset_index(), on=["code", "ym"], how="left")
 
     # ---------- 3. 因子暴露 ----------
@@ -116,7 +122,8 @@ def main() -> None:
     snap = snap.merge(nxt, on=["code", "ym_next"], how="left")
 
     FACTORS = ["VAL", "SMB", "MOM", "QMJ", "LOWVOL", "TURN"]
-    keep = ["date", "ym", "code", "industry", "float_mv", "n_days", "mret", "ret_next"] + FACTORS
+    keep = ["date", "ym", "code", "industry", "float_mv", "n_days", "calendar_days",
+            "isST", "mret", "ret_next"] + FACTORS
     monthly = snap[keep].copy()
     write_parquet(monthly, CLEAN / "monthly.parquet")
     log.info(f"月频截面：{len(monthly):,} 行 × {monthly['ym'].nunique()} 个月")
@@ -129,10 +136,8 @@ def main() -> None:
         if not gate.ok():
             log.warning("闸门触发，因子构造提前收手")
             break
-        base = gdf.dropna(subset=["ret_next", "float_mv"])
-        base = base[base["float_mv"] > 0]
-        # 剔除规则：当月停牌超过 10 个交易日（正常月份约 20–22 个交易日）
-        base = base[base["n_days"] >= 10]
+        # 形成月只使用当时可见的市值、交易状态和因子暴露；ret_next 不参与筛选。
+        base = formation_universe(gdf)
         if len(base) < n_groups * 5:
             continue
         for f in FACTORS:
@@ -147,19 +152,23 @@ def main() -> None:
             bot = d[d["grp"] == 0]
             w_t = top["float_mv"] / top["float_mv"].sum()
             w_b = bot["float_mv"] / bot["float_mv"].sum()
-            # 顺便记下成分股与权重，供后面的日频多空收益使用
+            # 成员和原始权重在 t 月冻结。实现收益时仅在收益非缺失者上按腿
+            # 重新归一化，并披露每腿被保留的形成月权重（收益覆盖率）。
             leg_rows.append(top[["code"]].assign(ym=ym, factor=f, side="top",
                                                  w=w_t.to_numpy()))
             leg_rows.append(bot[["code"]].assign(ym=ym, factor=f, side="bot",
                                                  w=w_b.to_numpy()))
-            r_t = float((top["ret_next"] * w_t).sum())
-            r_b = float((bot["ret_next"] * w_b).sum())
+
+            r_t, cov_t, n_ret_t = realize_leg_return(top, w_t)
+            r_b, cov_b, n_ret_b = realize_leg_return(bot, w_b)
             recs.append({"ym": str(ym), "date": d["date"].max(), "factor": f,
                          # 口径提醒：本字段在 ym=t 记录、但实现于 t+1 月（用的是 ret_next）。
                          # 因此 ls_fwd1 本身就是「未来 1 个月收益」，下游做预测回归时
                          # **不要再 shift(-1)**；未来 h 个月的累计收益 = 连续 h 个 ls_fwd1 之和。
                          "top_ret": r_t, "bot_ret": r_b, "ls_fwd1": r_t - r_b,
                          "n_all": int(len(d)), "n_long": int(len(top)), "n_short": int(len(bot)),
+                         "n_long_ret": n_ret_t, "n_short_ret": n_ret_b,
+                         "top_ret_coverage": cov_t, "bot_ret_coverage": cov_b,
                          "top_mv_share": float(top["float_mv"].sum() / d["float_mv"].sum())})
 
     fr = pd.DataFrame(recs)
@@ -168,10 +177,8 @@ def main() -> None:
 
     # ---------- 6. 日频多空收益 ----------
     # 为什么要单独算这一份：Lou & Polk 在美股还记录了 comomentum 预测因子的
-    # **实现波动与偏度**。所以「comomentum 在 A 股不预测收益」有两种完全不同的解释：
-    #   （甲）测度没坏，只是不预测收益——那么它应当**仍能**预测波动；
-    #   （乙）我们的实现有问题——那么它连波动也预测不了。
-    # 这个区分对本文的结论至关重要，所以必须把日频多空收益留下来做检验。
+    # **实现波动与偏度**。日频多空收益因此用于不同经济原假设下的补充诊断；
+    # 二阶矩结果无论显著与否，都不能单独验证或证伪 comomentum 的实现。
     log.info("计算日频多空收益（供波动/偏度检验用）")
     # 注意用 concat 而不是 pd.DataFrame(list)：后者会把 DataFrame 列表当成 3 维数组
     leg = pd.concat(leg_rows, ignore_index=True)

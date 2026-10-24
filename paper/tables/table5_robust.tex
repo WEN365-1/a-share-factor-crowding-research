@@ -1,0 +1,23 @@
+\begingroup\footnotesize\setlength{\tabcolsep}{2.5pt}
+\begin{tabular}{lllcccc}
+\toprule
+Check & Grouping & Measure & $\beta$ & HAC $t$ & Perm. $p$ & $N$ \\
+\midrule
+Subsample & 2015--2018 leverage cycle & Comomentum & -0.0036 & -0.63 & 0.361 & 216 \\
+Subsample & 2015--2018 leverage cycle & Margin-balance proxy & -0.0050 & -1.40 & 0.167 & 272 \\
+Subsample & 2019--2021 foreign inflows & Comomentum & 0.0033 & 0.49 & 0.722 & 216 \\
+Subsample & 2019--2021 foreign inflows & Margin-balance proxy & -0.0246 & -2.14 & 0.139 & 216 \\
+Subsample & 2022--2025 retail margin & Comomentum & 0.0093 & 1.52 & 0.149 & 282 \\
+Subsample & 2022--2025 retail margin & Margin-balance proxy & -0.0142 & -2.14 & 0.149 & 282 \\
+Equal-weighted & Equal-weighted & Comomentum & -0.0002 & -0.08 & 0.950 & 714 \\
+Equal-weighted & Equal-weighted & Margin-balance proxy & -0.0074*** & -2.53 & 0.008 & 770 \\
+Window & Balance change, 6 months & Margin-balance proxy & -0.0133** & -2.06 & 0.042 & 765 \\
+Window & Balance change, 24 months & Margin-balance proxy & -0.0062 & -1.29 & 0.274 & 757 \\
+Variant & Long leg only & Margin-balance proxy, long leg & -0.0008 & -0.31 & 0.807 & 771 \\
+Variant & Short leg only & Margin-balance proxy, short leg & 0.0029 & 1.35 & 0.336 & 770 \\
+\midrule
+\multicolumn{7}{l}{\parbox{\dimexpr\textwidth-10pt\relax}{\footnotesize Notes: Stars use finite circular-shift permutation $p$-values; * $p<0.10$, ** $p<0.05$, *** $p<0.01$.}} \\
+\bottomrule
+\end{tabular}
+
+\endgroup

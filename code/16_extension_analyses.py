@@ -8,8 +8,9 @@
   table10_agreement.csv    拓展：两代理一致性拆分（comomentum 高/低时 margin 系数的差异）
   table_cov_stats.csv      H11a：各因子两融覆盖率统计（用于正文披露）
 
-设计口径与 09 完全一致：pooled 标准化、因子固定效应、spec D 控制变量、
-Newey–West(6) + 因子内循环平移安慰剂 p 值（加一修正）。
+设计口径与 09 完全一致：pooled 标准化、因子固定效应、spec D 控制变量；
+h=12 用 Newey–West(12)，其余期限用 Newey–West(6)，观测与置换同阶数；
+因子内循环平移安慰剂 p 值采用加一修正。
 """
 from __future__ import annotations
 
@@ -70,7 +71,7 @@ def build_panel() -> pd.DataFrame:
             df[c + "_z"] = (df[c] - df[c].mean()) / df[c].std()
     fe = pd.get_dummies(df["factor"], prefix="FE", drop_first=True).astype(float)
     df = pd.concat([df, fe], axis=1)
-    return df
+    return df.sort_values(["ym", "factor"]).copy()
 
 
 def controls_for(df: pd.DataFrame, spec: str) -> list[str]:
@@ -80,19 +81,20 @@ def controls_for(df: pd.DataFrame, spec: str) -> list[str]:
     if spec in ("C", "D") and "level_margin_z" in df.columns:
         c += ["level_margin_z"]
     if spec == "D" and "cover_long_z" in df.columns:
-        c += ["cover_long_z"]
+        c += ["cover_long_z", "cover_short_z"]
     return c
 
 
 def fit_row(d: pd.DataFrame, cols: list[str], measure: str, y: str,
             meta: dict) -> dict | None:
     """HAC + 循环平移安慰剂，与 09 完全一致的推断。"""
-    d = d.dropna(subset=cols + [y]).copy()
+    d = d.dropna(subset=cols + [y]).sort_values(["ym", "factor"]).copy()
     if len(d) < 40:
         return None
-    r = hac_ols(d[y].to_numpy(), d[cols].to_numpy(), cols)
-    pp, nd = placebo_pvalue(d, cols, measure, y, r[measure]["t"])
-    row = {"measure": measure.replace("_z", ""), "horizon": None,
+    lags = 12 if meta.get("horizon") == 12 else 6
+    r = hac_ols(d[y].to_numpy(), d[cols].to_numpy(), cols, lags=lags)
+    pp, nd = placebo_pvalue(d, cols, measure, y, r[measure]["t"], hac_lags=lags)
+    row = {"measure": measure.replace("_z", ""), "horizon": None, "hac_lags": lags,
            "beta": r[measure]["coef"], "se": r[measure]["se"], "t": r[measure]["t"],
            "p": r[measure]["p"], "p_placebo": pp, "n": r["_n"]}
     row.update(meta)
@@ -215,7 +217,7 @@ def robust_extra(df: pd.DataFrame) -> pd.DataFrame:
 # 4) 拓展：两代理一致性拆分（comomentum 高/低时 margin 系数的差异）
 # ------------------------------------------------------------------
 def placebo_null_interaction(d: pd.DataFrame, cols: list[str], base: str,
-                             inter: str, y: str) -> np.ndarray:
+                             inter: str, y: str, hac_lags: int = 6) -> np.ndarray:
     """交互项的循环平移零分布：平移 base 测度后**重建**交互列再重估。"""
     from common import _grouped_circular_shift
     frame = d.sort_values(["ym", "factor"]).copy()
@@ -227,7 +229,8 @@ def placebo_null_interaction(d: pd.DataFrame, cols: list[str], base: str,
     for k in range(1, n_shifts + 1):
         perm = _grouped_circular_shift(frame, base, "factor", k)
         perm[inter] = perm[base] * perm["high_comom"]
-        r = hac_ols(perm[y].to_numpy(dtype=float), perm[cols].to_numpy(dtype=float), cols)
+        r = hac_ols(perm[y].to_numpy(dtype=float), perm[cols].to_numpy(dtype=float), cols,
+                    lags=hac_lags)
         t = r.get(inter, {}).get("t", np.nan)
         if np.isfinite(t):
             ts.append(abs(float(t)))
@@ -249,18 +252,20 @@ def agreement_split(df: pd.DataFrame) -> pd.DataFrame:
                 rows.append(r)
     # 交互项：crowd_margin_z × high_comom（平移后重建交互列的零分布）
     for h in HORIZONS:
+        lags = 12 if h == 12 else 6
         cols = ["crowd_margin_z", "high_comom", "inter_mh"] + ctrl
         d = df.copy()
         d["inter_mh"] = d["crowd_margin_z"] * d["high_comom"]
         d = d.dropna(subset=cols + [f"fwd{h}"]).copy()
         if len(d) < 40:
             continue
-        r = hac_ols(d[f"fwd{h}"].to_numpy(), d[cols].to_numpy(), cols)
-        null = placebo_null_interaction(d, cols, "crowd_margin_z", "inter_mh", f"fwd{h}")
+        r = hac_ols(d[f"fwd{h}"].to_numpy(), d[cols].to_numpy(), cols, lags=lags)
+        null = placebo_null_interaction(d, cols, "crowd_margin_z", "inter_mh", f"fwd{h}",
+                                        hac_lags=lags)
         pp = (float((1.0 + np.sum(null >= abs(r["inter_mh"]["t"]))) / (1.0 + null.size))
               if null.size else np.nan)
         rows.append({"measure": "interaction", "analysis": "agreement split",
-                     "group": "margin x high comomentum", "horizon": h,
+                     "group": "margin x high comomentum", "horizon": h, "hac_lags": lags,
                      "beta": r["inter_mh"]["coef"], "se": r["inter_mh"]["se"],
                      "t": r["inter_mh"]["t"], "p": r["inter_mh"]["p"],
                      "p_placebo": pp, "n": r["_n"]})

@@ -13,7 +13,8 @@
                    故不采用；详见 main() 内 ② 的注释）
     ③ 同时放入 ：拥挤度与因子过去收益同时进回归，看 β 是否存活
 
-标准误：因子固定效应 + Newey–West(HAC, lag=6)。
+标准误：因子固定效应 + Newey–West(HAC)；h=12 用 lag=12，其余期限用 lag=6。
+  观测回归与循环平移置换使用相同滞后阶数。
   注：因子只有 6 个，因子层面聚类的渐近性质不可靠，故以 NW 为主、聚类结果仅作对照报出。
 
 产出：
@@ -83,7 +84,7 @@ def build_panel() -> pd.DataFrame:
     # 所以安慰剂 p 值对这类跨因子水平污染本来就是稳健的。
     fe = pd.get_dummies(df["factor"], prefix="FE", drop_first=True).astype(float)
     df = pd.concat([df, fe], axis=1)
-    return df
+    return df.sort_values(["ym", "factor"]).copy()
 
 
 MOM_CTRL = ["past1", "past6", "past12"]
@@ -97,8 +98,18 @@ def controls_for(df: pd.DataFrame, spec: str) -> list[str]:
     if spec in ("C", "D") and "level_margin_z" in df.columns:
         c += ["level_margin_z"]          # 关键：控制两融「水平」，分离机械成分
     if spec == "D" and "cover_long_z" in df.columns:
-        c += ["cover_long_z"]            # 控制组合两融覆盖率（样本宽度变化）
+        c += ["cover_long_z", "cover_short_z"]  # 同时控制多头与空头腿的样本宽度
     return c
+
+
+def infer_horizon(d: pd.DataFrame, cols: list[str], measure: str, y: str,
+                  horizon: int):
+    """短规格 HAC(6)，12 个月辅助规格 HAC(12)；置换使用完全相同的滞后阶数。"""
+    lags = 12 if horizon == 12 else 6
+    r = hac_ols(d[y].to_numpy(), d[cols].to_numpy(), cols, lags=lags)
+    pp, ndraw = placebo_pvalue(d, cols, measure, y, r[measure]["t"],
+                               z_by="factor", hac_lags=lags)
+    return r, pp, ndraw, lags
 
 
 def main() -> None:
@@ -121,11 +132,10 @@ def main() -> None:
                 d = df.dropna(subset=cols + [f"fwd{h}"]).copy()
                 if len(d) < 40:
                     continue
-                r = hac_ols(d[f"fwd{h}"].to_numpy(), d[cols].to_numpy(), cols)
-                pp, ndraw = placebo_pvalue(d, cols, measure, f"fwd{h}", r[measure]["t"])
+                r, pp, ndraw, lags = infer_horizon(d, cols, measure, f"fwd{h}", h)
                 rows.append({"measure": measure.replace("_z", ""), "spec": spec,
                              "controls": "+".join(ctrl) if ctrl else "无",
-                             "horizon": h,
+                             "horizon": h, "hac_lags": lags,
                              "beta": r[measure]["coef"], "se": r[measure]["se"],
                              "t": r[measure]["t"], "p": r[measure]["p"],
                              "p_placebo": pp, "n_placebo": ndraw,
@@ -172,11 +182,10 @@ def main() -> None:
             dd = d.dropna(subset=["crowd_pure", f"fwd{h}"])
             if len(dd) < 40:
                 continue
-            r = hac_ols(dd[f"fwd{h}"].to_numpy(), dd[["crowd_pure"]].to_numpy(), ["crowd_pure"])
-            pp, ndraw = placebo_pvalue(dd, ["crowd_pure"], "crowd_pure", f"fwd{h}",
-                                       r["crowd_pure"]["t"])
+            r, pp, ndraw, lags = infer_horizon(dd, ["crowd_pure"], "crowd_pure", f"fwd{h}", h)
             rows3.append({"measure": measure.replace("_z", ""), "layer": "①正交化后残差",
-                          "horizon": h, "beta": r["crowd_pure"]["coef"], "t": r["crowd_pure"]["t"],
+                          "horizon": h, "hac_lags": lags,
+                          "beta": r["crowd_pure"]["coef"], "t": r["crowd_pure"]["t"],
                           "p": r["crowd_pure"]["p"], "p_placebo": pp, "n": r["_n"],
                           "note": f"正交化R²={r2_orth:.3f}（对因子动量+两融水平）；"
                                   f"安慰剂 |t| 零分布 {ndraw} 次重抽"})
@@ -187,10 +196,10 @@ def main() -> None:
             dd = df.dropna(subset=cols + [f"fwd{h}"])
             if len(dd) < 40:
                 continue
-            r = hac_ols(dd[f"fwd{h}"].to_numpy(), dd[cols].to_numpy(), cols)
-            pp, _ = placebo_pvalue(dd, cols, measure, f"fwd{h}", r[measure]["t"])
+            r, pp, _, lags = infer_horizon(dd, cols, measure, f"fwd{h}", h)
             rows3.append({"measure": measure.replace("_z", ""), "layer": "③与全部控制同时放入",
-                          "horizon": h, "beta": r[measure]["coef"], "t": r[measure]["t"],
+                          "horizon": h, "hac_lags": lags,
+                          "beta": r[measure]["coef"], "t": r[measure]["t"],
                           "p": r[measure]["p"], "p_placebo": pp, "n": r["_n"],
                           "note": "控制=" + "+".join(ctrl_o)})
 
@@ -285,36 +294,27 @@ def main() -> None:
     mixed = [m for m, st in decision.items() if st["n_sig"] >= 2 and st["n_pos"] > 0]
 
     if survived and not any(st["n_sig"] >= 2 for m, st in decision.items() if m not in survived):
-        verdict += [f"**判定：系数存活**（{'、'.join(survived)}），其余测度消失。",
+        verdict += [f"**判定：预设主证据单元支持**（{'、'.join(survived)}）。",
                     "",
-                    "论文按「拥挤度预测 A 股因子衰减」写，但**必须把这个不对称本身当作主要发现**："
-                    "直接测度（两融余额）显著为负，间接测度（comomentum）完全无预测力。"
-                    "两者在因子内的相关性本就接近于零且符号不一（见 Table 1），"
-                    "所以正确的读法不是「Lou & Polk 的结果在 A 股成立或不成立」，"
-                    "而是「在可以直接观测杠杆持仓的市场里，间接测度没有捕捉到拥挤」。"
-                    "这是一个测量层面的贡献，也是本文区别于单国复制的地方。"]
+                    "该判定只覆盖基线日频 comomentum 与融资余额在 h∈{1,3,6} 的两层规格。"
+                    "融资余额结果应写成 pooled、条件性的负向关联，并同时报告因子和子样本异质性；"
+                    "它不是账户级总持仓或因果效应。基线 comomentum 未通过本组闸门不等于"
+                    "所有期限和周频构造均无预测力，也不能据此宣布其不是拥挤测度。"
+                    "周频 LP 对照、长期结果与多重检验见 19--23 号脚本，结论统一限定为测度比较。"]
     elif survived:
-        verdict += [f"**判定：系数存活**（{'、'.join(survived)}）。",
+        verdict += [f"**判定：预设主证据单元支持**（{'、'.join(survived)}）。",
                     "",
-                    "论文按「拥挤度预测 A 股因子衰减」写：标题、摘要、引言按原定方案，"
-                    "并把两个测度的一致性（或不一致性）作为边界条件证据展开。"]
+                    "只按实际通过的证据单元报告，不把测度间差异扩张为普遍规律或直接验证。"]
     elif mixed:
         verdict += [f"**判定：方向矛盾**（{'、'.join(mixed)}）。",
                     "",
-                    "有显著单元但正负都有 → **不自动改写**。需要人工判断："
-                    "可能是某个持有期上反向（例如短期动量延续、长期才衰减），"
-                    "也可能是测度捕捉到了别的东西。这一情形事先没写预案，必须先讨论再动笔。"]
+                    "有显著单元但正负都有，不自动改写为单一方向结论。需要检查持有期、"
+                    "构造、因子异质性和多重检验，再决定哪些条件性发现可以保留。"]
     else:
-        verdict += ["**判定：系数消失。**",
+        verdict += ["**判定：本组预设证据单元未通过。**",
                     "",
-                    "按预案改写成否定性发现——「所谓因子拥挤效应在 A 股可能只是因子动量的影子」。",
-                    "标题、摘要、引言要重写。注意这仍是一个可发表的结果：",
-                    "它是对 Lou & Polk (2022) 结论的边界条件检验，且我们有一个他们无法做的检验——"
-                    "直接测度（两融）与间接测度（comomentum）同时给出否定证据。",
-                    "",
-                    "写法上要避免的坑：不能只是「我们没找到显著」，而要说清楚"
-                    "**在什么条件下本该找到却找不到**（杠杆受限、卖空昂贵、散户主导），"
-                    "并报出安慰剂分布，说明不是检验功效不足。"]
+                    "这不是普遍无效或测度失败的证明。报告基线规格、有限功效和适用边界，"
+                    "并把其他构造与期限作为独立的辅助证据族，不能用探索性结果反向替换闸门。"]
     (REPORTS / "gate_2026-11-15_verdict.md").write_text("\n".join(verdict), encoding="utf-8")
     log.info(f"闸门判定：{decision}")
     log.info("闸门判定已写入 reports/gate_2026-11-15_verdict.md")

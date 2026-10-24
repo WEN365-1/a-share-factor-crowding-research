@@ -163,8 +163,9 @@ def main() -> None:
         df = df[df["tradestatus"] == 1]                     # 只保留正常交易
         ipo_dt = pd.to_datetime(df["code"].map(ipo_map), errors="coerce")
         df = df[(df["date"] - ipo_dt).dt.days >= cfg["universe"]["min_list_days"]]
-        if cfg["universe"]["drop_st"]:
-            df = df[df["isST"] == 0]
+        # ST 是形成日股票池状态，不是删除历史或持有期交易日的理由。
+        # 这里保留 isST，06 在每月最后可见快照上按当时状态筛选；收益、动量、
+        # 波动与实现期日收益因此保留此前或此后的 ST 交易日。
         if cfg["universe"]["drop_financial"]:
             # 注意：Baostock 的行业名带证监会门类前缀，实际值是
             # 「J66货币金融服务」「J67资本市场服务」「J68保险业」「L71租赁业」这种形式。
@@ -180,7 +181,7 @@ def main() -> None:
 
         cols = [c for c in ["date", "code", "close", "ret", "volume", "amount", "turn",
                             "float_mv", "shares_float", "industry", "peTTM", "pbMRQ",
-                            "psTTM", "pcfNcfTTM"] if c in df.columns]
+                            "psTTM", "pcfNcfTTM", "isST"] if c in df.columns]
         out = df[cols].sort_values(["date", "code"])
         d_dir = CLEAN / "panel" / f"year={yr}"
         d_dir.mkdir(parents=True, exist_ok=True)
@@ -213,29 +214,41 @@ def main() -> None:
 | shares_float | 流通股本（股），由 volume×100/turn 推导，停牌日以前值填充 | 推导值 |
 | float_mv | 流通市值 = shares_float × close | 推导值 |
 | industry | 行业 | Baostock query_stock_industry |
-| peTTM | 市盈率 TTM | Baostock，**PIT（按公告日更新，已实证验证）** |
-| pbMRQ | 市净率 MRQ | Baostock，**PIT** |
-| psTTM | 市销率 TTM | Baostock，**PIT** |
-| pcfNcfTTM | 市现率 TTM | Baostock，**PIT** |
+| peTTM | 市盈率 TTM | Baostock；40 只分层样本审计支持按披露日更新的解释，但不保证历史值不修订 |
+| pbMRQ | 市净率 MRQ | Baostock；40 只分层样本审计支持按披露日更新的解释，但不保证历史值不修订 |
+| psTTM | 市销率 TTM | Baostock；未单独进行多股票时点审计 |
+| pcfNcfTTM | 市现率 TTM | Baostock；未单独进行多股票时点审计 |
+| isST | ST / *ST 状态 | Baostock；保留在日频面板，06 仅在形成月最后可见快照上筛选 |
 
 ## 剔除规则（已应用）
 1. tradestatus ≠ 1（停牌等）
 2. 上市不足 180 天
-3. ST / *ST
-4. 金融行业（银行、保险、证券、多元金融、资本市场、租赁）
-5. 北交所（Baostock 不覆盖）
+3. 金融行业（银行、保险、证券、多元金融、资本市场、租赁）
+4. 北交所（Baostock 不覆盖）
 
 ## 未在本层应用、留到因子层的规则
+- ST / *ST → 在 06 按形成月最后可见快照的 isST 筛选；不得删除历史或持有期 ST 交易日
 - 当月停牌超过 10 个交易日 → 在 06 用 n_days 施加
 - 月内日收益缺失超过 20% → 由 tradestatus 过滤后自然满足
 - 从未进入两融标的名单 → **刻意不剔除**：因子组合在全 A 构造，
   两融拥挤度只在成分股上求和，并另设「两融水平」「组合两融覆盖率」控制变量（见 08/09）
 
+## 形成日与收益实现
+形成月若股票未在市场统一月末交易日交易，使用该股票当月最后可见快照，并按该快照的 ST 状态
+筛选。日频面板保留 ST 交易日，因此动量、波动、月收益和实现期日收益不再被事后 ST 过滤。
+生产月度收益在已知次月收益非缺失的股票上重新归一化形成权重。26/27 号脚本分别检验逐日冻结
+权重腿收益和部分统一月末口径；后者不重建拥挤度和覆盖率。28 号脚本独立从原始日线复核股票—
+自然月收益；任何保留交易日收益缺失则该月收益缺失。只有 `outDate` 落在持有自然月内、原始
+收益仍缺失且非样本右删失的事件才进入 29 号脚本的 0% 或 −100% 压力情景；其他非终止缺口和
+样本右删失不插补，情景收益保留在有效权重分母中。−100% 只是压力边界，不是中国退市、换股
+或吸收合并实际 payoff 的估计。
+
 ## 前视偏差说明
-价 / 量 / 换手 / 估值字段均取自当日可得的公开行情，不含未来信息。
-收益率使用不含未来信息的 pctChg。估值字段的 PIT 性已由实证检验确认：
-浦发银行的每股净资产（由 close/pbMRQ 反推）只在 2024-04-30 与 2024-08-20 换台阶，
-即年报/一季报与半年报的**披露日**，而非报告期末。
+交易信号只使用形成日已存在的记录，收益率使用不含未来信息的 pctChg。对 peTTM 与 pbMRQ，
+2026-10-24 的 40 只分层样本审计显示：隐含 BPS/EPS 台阶与财报公告日的匹配率分别为
+89.0%（790/888）和 80.7%（612/758），公告日到 BPS 台阶的覆盖率为 87.7%（794/905）。
+这支持按披露日更新的解释，但不证明供应商不会回填或修订历史，也不能单独排除全部前视偏差。
+psTTM 与 pcfNcfTTM 未单独进行该多股票审计。
 """
     (REPORTS / "data_dictionary.md").write_text(dd, encoding="utf-8")
     heartbeat(f"05 面板装配结束（{total:,} 行）", log)

@@ -274,8 +274,40 @@ def bs_login_ok(bs, log, tries: int = 30, base_wait: float = 5.0) -> bool:
 
 
 # ---------------------------------------------------------------
-# 回归与推断工具（09 与 11 共用）
+# 形成月股票池、回归排序与推断工具
 # ---------------------------------------------------------------
+
+def formation_universe(frame: pd.DataFrame, max_nontrading_days: int = 10) -> pd.DataFrame:
+    """按形成日可见信息筛选股票，不删除历史或持有期 ST 收益。
+
+    ST 状态取自当月最后可见交易快照；缺该字段时直接失败，避免静默退回
+    旧的日线删除口径。非交易日分母使用当月交易日历天数，而非固定观测数。
+    """
+    required = {"float_mv", "n_days", "calendar_days", "isST"}
+    missing = required.difference(frame.columns)
+    if missing:
+        raise KeyError(f"形成月股票池缺少字段: {sorted(missing)}")
+    st = pd.to_numeric(frame["isST"], errors="coerce")
+    return frame[(frame["float_mv"].notna()) & (frame["float_mv"] > 0)
+                 & st.eq(0) & st.notna()
+                 & ((frame["calendar_days"] - frame["n_days"]) <= max_nontrading_days)].copy()
+
+
+def realize_leg_return(leg: pd.DataFrame, formation_w: pd.Series) -> tuple[float, float, int]:
+    """冻结形成月权重，在次月收益非缺失者上重新归一化并报告覆盖率。"""
+    valid = leg["ret_next"].notna()
+    coverage = float(formation_w[valid].sum())
+    if not valid.any() or coverage <= 0:
+        return np.nan, coverage, 0
+    w_valid = formation_w[valid] / coverage
+    ret = float((leg.loc[valid, "ret_next"] * w_valid).sum())
+    return ret, coverage, int(valid.sum())
+
+
+def regression_frame(frame: pd.DataFrame, z_by: str = "factor") -> pd.DataFrame:
+    """观测回归与置换回归共用同一行顺序：先时间、再分组。"""
+    return frame.sort_values(["ym", z_by]).copy()
+
 
 def hac_ols(y, X, names: list[str], lags: int = 6):
     """普通最小二乘 + Newey–West(HAC) 标准误。返回 {变量名: {coef, se, t, p}}。
@@ -323,7 +355,7 @@ def _grouped_circular_shift(frame: pd.DataFrame, measure: str, z_by: str,
 
 
 def placebo_null_dist(d, cols: list[str], measure: str, y: str,
-                      z_by: str = "factor"):
+                      z_by: str = "factor", hac_lags: int = 6):
     """与观测回归完全相同 estimator 的 pooled |t| 零分布。
 
     每个 circular shift 都复制完整面板、在各分组内平移测度，并调用同一个
@@ -339,7 +371,8 @@ def placebo_null_dist(d, cols: list[str], measure: str, y: str,
     ts = []
     for k in range(1, n_shifts + 1):
         perm = _grouped_circular_shift(frame, measure, z_by, k)
-        r = hac_ols(perm[y].to_numpy(dtype=float), perm[cols].to_numpy(dtype=float), cols)
+        r = hac_ols(perm[y].to_numpy(dtype=float), perm[cols].to_numpy(dtype=float), cols,
+                    lags=hac_lags)
         t = r.get(measure, {}).get("t", np.nan)
         if np.isfinite(t):
             ts.append(abs(float(t)))
@@ -347,9 +380,9 @@ def placebo_null_dist(d, cols: list[str], measure: str, y: str,
 
 
 def placebo_pvalue(d, cols: list[str], measure: str, y: str,
-                   obs_t: float, z_by: str = "factor") -> tuple[float, int]:
+                   obs_t: float, z_by: str = "factor", hac_lags: int = 6) -> tuple[float, int]:
     """计算有限循环置换 p 值，并使用加一修正。"""
-    a = placebo_null_dist(d, cols, measure, y, z_by)
+    a = placebo_null_dist(d, cols, measure, y, z_by, hac_lags=hac_lags)
     if not a.size or not np.isfinite(obs_t):
         return float("nan"), int(a.size)
     return float((1.0 + np.sum(a >= abs(obs_t))) / (1.0 + a.size)), int(a.size)

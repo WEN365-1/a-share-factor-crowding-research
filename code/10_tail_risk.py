@@ -50,7 +50,7 @@ def quanteq_placebo(d: pd.DataFrame, cols: list[str], measure: str, y: str,
     每次平移后仍在完整 pooled panel 上估计相同的固定效应分位数回归，
     不再把各因子单独估计得到的 t 值混成观测 pooled statistic 的零分布。
     """
-    frame = d.sort_values(["factor", "ym"]).copy()
+    frame = d.sort_values(["ym", "factor"]).copy()
     groups = [g for _, g in frame.groupby("factor", observed=True, sort=False)]
     if not groups or any(len(g) < MIN_SHIFT_N for g in groups):
         return float("nan"), 0, 0
@@ -125,7 +125,7 @@ def main() -> None:
     for measure in ["comomentum", "crowd_margin"]:
         if measure not in df.columns:
             continue
-        d = df.dropna(subset=[measure, "ls_fwd1"]).copy()
+        d = df.dropna(subset=[measure, "ls_fwd1"]).sort_values(["ym", "factor"]).copy()
         if len(d) < 120:
             continue
         fe = pd.get_dummies(d["factor"], prefix="FE", drop_first=True).astype(float)

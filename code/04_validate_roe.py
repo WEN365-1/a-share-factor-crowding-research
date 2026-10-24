@@ -3,11 +3,12 @@
 
 背景（这是一个重要的设计简化）：
   原计划要从财务报表构建质量因子（ROE），需按披露日做 PIT 对齐，是全流程最重、最容易翻车的一块。
-  但 Baostock 日频 k 线已经直接给出 PIT 的 peTTM 与 pbMRQ，而
+  但 Baostock 日频 k 线已经直接给出 peTTM 与 pbMRQ，而
 
         ROE = E/B = (E/P) / (B/P) = (1/peTTM) / (1/pbMRQ) = pbMRQ / peTTM
 
-  也就是说 **隐含 ROE 可以直接从日频估值字段推出，零额外拉取、且天然 PIT**。
+  隐含 ROE 因而可从日频估值字段推出，零额外拉取。多股票台阶审计支持其按披露日更新的
+  解释，但不能保证供应商不修订历史，故不称其为“天然 PIT”。
 
 本脚本的作用：随机抽 SAMPLE_N 只股票，拉真实季频 roeAvg（query_profit_data，带 pubDate），
 与同期的隐含 ROE 对比，给出相关系数与分位偏差。若相关性足够高，代理变量即可写进论文；
@@ -130,7 +131,7 @@ def main() -> None:
           f"- Pearson 相关系数：**{corr:.3f}**",
           f"- Spearman 秩相关：**{spear:.3f}**",
           f"- 股票内时序相关系数（{len(within)} 只股票）：中位 {within.median():.3f}",
-          "- 隐含 ROE 定义：`pbMRQ / peTTM`（TTM 口径，由日频 PIT 估值字段推出）",
+          "- 隐含 ROE 定义：`pbMRQ / peTTM`（TTM 口径，由日频估值字段推出；披露日更新有多股票样本证据）",
           "- 真实 ROE 定义：Baostock `query_profit_data` 的 `roeAvg`（单季平均口径，按 pubDate 对齐）",
           "",
           "## 怎么读", "",

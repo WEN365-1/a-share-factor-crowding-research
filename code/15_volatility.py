@@ -1,21 +1,12 @@
 """
 15_volatility.py —— comomentum 是否预测因子的**实现波动与偏度**
 
-这个检验的目的是把两种完全不同的解释分开：
+这个检验考察 comomentum 与后续实现波动、偏度的关联，是不同经济原假设下的补充诊断。
 
-  Lou & Polk (2022) 在美股记录了三件事——comomentum 预测
-  ①更低的多空收益、②更高的波动、③更负的偏度。
-  本文发现①在 A 股不成立（comomentum 对收益毫无预测力，安慰剂 p 0.35~0.97）。
-  但这有两种解释：
-
-    （甲）**测度没坏**，只是不预测收益。那么它应当**仍能预测波动与偏度**——
-          毕竟它度量的是残差相关，而残差相关高本来就意味着共同因子暴露大。
-    （乙）**我们的实现有问题**（因子分组、FF3 构造、相关矩阵哪一步错了）。
-          那么它连波动也预测不了。
-
-  这两种解释对论文的含义完全不同：（甲）下结论是「间接测度在 A 股捕捉不到
-  可交易的拥挤」；（乙）下结论就只能是「本文的 comomentum 实现失败」——
-  后者会让整篇文章站不住。所以必须做这个检验并如实报出。
+  Lou & Polk (2022) 在美股记录了 comomentum 对多空收益、波动与偏度的预测关系。
+  本文短期收益关联有限、周频长期结果异质；二阶矩结果可能不同，但无论显著与否，
+  都不能单独证明实现正确或错误，更不能证明测度识别了账户级拥挤或真实持仓。
+  实现核验仍需依靠定义对照、单元测试和独立复现，经济结果按实际证据如实报告。
 
 做法：用 06 写出的 `factor_daily.parquet`（日频多空收益），
   对每个形成月 t，算持有期内的日频实现波动与偏度，再对拥挤度做回归。
@@ -42,50 +33,16 @@ MIN_DAYS = 8          # 一个月至少要有这么多交易日才计算实现�
 
 
 def build_realized() -> pd.DataFrame:
-    """由日频多空收益算出每个 (形成月, 因子) 在**持有期**内的实现波动与偏度。"""
-    d = read_parquet(CLEAN / "factor_daily.parquet")
-    d["date"] = pd.to_datetime(d["date"])
-    d["ym"] = pd.PeriodIndex(d["ym"], freq="M")
-    d = d.sort_values(["factor", "date"])
-
-    # 持有月 = 形成月 + 1。先把日频收益按「持有月」聚合出月度实现矩，
-    # 再按窗口长度滚动累加（波动用平方和开方，偏度用三阶矩合成）。
-    value_col = "ls_fwd1" if "ls_fwd1" in d.columns else "ls_ret"
-    if value_col == "ls_ret":
-        log.warning("factor_daily.parquet 使用旧字段 ls_ret，按兼容路径读取；建议先重跑 06_build_factors.py")
-    g = d.groupby(["factor", "ym"], observed=True)[value_col]
-    mon = pd.DataFrame({
-        "n_days": g.count(),
-        "sum_r": g.sum(),
-        "sum_r2": g.apply(lambda s: float((s ** 2).sum())),
-        "sum_r3": g.apply(lambda s: float((s ** 3).sum())),
-    }).reset_index()
-    mon = mon[mon["n_days"] >= MIN_DAYS].copy()
-
-    out = []
-    for f, gg in mon.groupby("factor", observed=True):
-        gg = gg.sort_values("ym").reset_index(drop=True)
-        for h in HORIZONS:
-            n = gg["n_days"].rolling(h, min_periods=h).sum()
-            s1 = gg["sum_r"].rolling(h, min_periods=h).sum()
-            s2 = gg["sum_r2"].rolling(h, min_periods=h).sum()
-            s3 = gg["sum_r3"].rolling(h, min_periods=h).sum()
-            mean = s1 / n
-            var = (s2 / n) - mean ** 2
-            m3 = (s3 / n) - 3 * mean * (s2 / n) + 2 * mean ** 3
-            vol = np.sqrt(var.clip(lower=0))
-            skew = np.where(vol > 0, m3 / (vol ** 3), np.nan)
-            tmp = pd.DataFrame({
-                "factor": f,
-                # 形成月 = 持有窗口起点 − 1
-                "ym": gg["ym"] - h,
-                "horizon": h,
-                "realized_vol": vol.to_numpy(),
-                "realized_skew": skew,
-                "n_days": n.to_numpy(),
-            })
-            out.append(tmp)
-    r = pd.concat(out, ignore_index=True)
+    """复用 23 的连续月历与前向窗口，避免重复实现造成月份错配。"""
+    from importlib.util import module_from_spec, spec_from_file_location
+    path = Path(__file__).resolve().with_name("23_lp_second_moments.py")
+    spec = spec_from_file_location("second_moments_23", path)
+    module = module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    r = module.build_outcomes()
+    r = r[r["horizon"].isin(HORIZONS)].copy()
+    r = r.rename(columns={"daily_vol": "realized_vol", "daily_skew": "realized_skew"})
     r["ym"] = pd.PeriodIndex(r["ym"], freq="M")
     return r.dropna(subset=["realized_vol"])
 
@@ -103,7 +60,7 @@ def main() -> None:
             continue
         for h in HORIZONS:
             for target, tname in (("realized_vol", "波动"), ("realized_skew", "偏度")):
-                d = df[(df["horizon"] == h)].dropna(subset=[measure, target]).copy()
+                d = df[(df["horizon"] == h)].dropna(subset=[measure, target]).sort_values(["ym", "factor"]).copy()
                 if len(d) < 60:
                     continue
                 fe = pd.get_dummies(d["factor"], prefix="FE", drop_first=True).astype(float)
@@ -135,11 +92,10 @@ def main() -> None:
     mm = t[(t["measure"] == "crowd_margin") & (t["target"] == "波动")]
     md = ["# comomentum 是否预测实现波动？", "",
           f"生成时间：{now_local():%Y-%m-%d %H:%M:%S}（北京时间）", "",
-          "**这个检验要回答的问题**：comomentum 在 A 股不预测收益（本文主结果），",
-          "是因为【测度没坏、只是不预测收益】，还是因为【我们的实现有问题】？",
-          "Lou & Polk 在美股记录到 comomentum 同时预测波动与偏度。",
-          "若 comomentum 在 A 股**仍能预测波动**，就支持前者；若连波动也预测不了，",
-          "则必须认真怀疑是实现的问题。", "",
+          "**这个检验要回答的问题**：在短期收益关联有限、周频长期结果又具有异质性的情况下，",
+          "comomentum 是否与后续二阶矩存在可检测关联？Lou & Polk 在美股记录到 comomentum",
+          "同时预测波动与偏度，但 A 股结果不成立本身既不能证明实现错误，成立也不能反向验证",
+          "实现正确或识别了真实持仓；它只是一项具有不同经济原假设的补充诊断。", "",
           "| 测度 | 持有期 | 目标 | 系数 | HAC t | 安慰剂 p | 样本 |",
           "|---|---|---|---|---|---|---|"]
     for _, x in t.iterrows():
@@ -151,10 +107,9 @@ def main() -> None:
         md.append("至少一个持有期的有限置换 p < 0.10；其余波动与偏度单元需按探索性结果报告。")
         md.append("这支持测度包含有信息的残差共变动，但不能证明它识别了账户级拥挤或真实持仓。")
     else:
-        md.append("**comomentum 对波动也没有预测力。**")
-        md.append("这**不支持**上面的解释（甲），必须认真对待解释（乙）：")
-        md.append("应当回头检查因子分组、FF3 构造与相关矩阵的实现，"
-                  "在排查清楚之前，不能把「间接测度在 A 股失效」当作结论写进论文。")
+        md.append("**这些设计未检测到 comomentum 对波动的方向性预测证据。**")
+        md.append("该结果不证明实现错误，也不证明总体效应为零；应结合定义对照、单元测试、"
+                  "检验分辨范围和其他独立实现诊断解释，不能据此二分推断。")
     if len(mm):
         md.append("")
         md.append(f"（对照：两融拥挤度对波动的安慰剂 p 为 "

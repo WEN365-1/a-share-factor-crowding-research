@@ -133,10 +133,12 @@ run_stage_or_stop 06_build_factors.py
 # ---------- 阶段 5：因子评估层（因子看板）----------
 run_stage_or_stop 07_evaluate.py
 
-# ---------- 阶段 6：两个拥挤度测度 ----------
+# ---------- 阶段 6：两个拥挤度测度与周频 LP 对照 ----------
 run_stage_or_stop 08_crowding.py
+run_stage_or_stop 19_comomentum_faithful.py
+run_stage_or_stop 20_comomentum_faithful_tests.py
 
-# ---------- 阶段 7：主检验 + 三层正交化（11/15 闸门）----------
+# ---------- 阶段 7：主检验 + 三层正交化 ----------
 run_stage_or_stop 09_regressions.py
 
 # ---------- 阶段 8：尾部检验 ----------
@@ -149,19 +151,38 @@ run_stage_or_stop 11_robustness.py
 # 放在 11 之后：它复用 09 的面板构造，且要等拥挤度表稳定下来
 run_stage_or_stop 13_power.py
 
-# ---------- 阶段 11：拥挤度是否预测实现波动/偏度 ----------
-# 这个检验用来排除「comomentum 在 A 股失效是因为我们实现有问题」这一解释：
-# 若它仍能预测波动与偏度，说明测度在正常工作、只是不预测收益。
+# ---------- 阶段 11：实现波动、偏度与坏周诊断 ----------
+# 这些诊断描述不同风险结果，不能用来证明测度实现正确或验证真实拥挤。
 run_stage_or_stop 15_volatility.py
 
-# ---------- 阶段 12：论文图表（CSV → LaTeX）----------
-# 必须在 09/10/11/13/15 之后：它是纯展示层，读它们的输出
+# ---------- 阶段 12：扩展、流量、周频对照、二阶矩与阈值敏感性 ----------
+run_stage_or_stop 16_extension_analyses.py
+run_stage_or_stop 17_pit_audit.py
+run_stage_or_stop 18_flow_proxy.py
+run_stage_or_stop 21_comomentum_robustness.py
+run_stage_or_stop 22_comomentum_factor_slopes.py
+run_stage_or_stop 23_lp_second_moments.py
+run_stage_or_stop 24_margin_staleness_robustness.py
+run_stage_or_stop 25_margin_staleness_tests.py
+
+# ---------- 阶段 13：形成窗口、收益实现与终止事件审计 ----------
+# 26/27 使用派生面板；28 还需要未按 ST 过滤的原始日线和 universe。
+# 29 的 0%/-100% 仅为终止收益压力情景，不是中国退市或换股 payoff 估计。
+run_stage_or_stop 26_formation_timing_audit.py
+run_stage_or_stop 27_formation_robustness.py
+run_stage_or_stop 28_terminal_return_audit.py
+run_stage_or_stop 29_terminal_return_robustness.py
+# 30 在全部生产输入固定后审计 comomentum 股票抽样；不替换生产测度。
+run_stage_or_stop 30_comomentum_sampling.py
+
+# ---------- 阶段 14：论文图表（CSV → LaTeX）----------
+# 必须在全部实证脚本之后：它是纯展示层，读取它们的输出。
 run_stage_or_stop 12_make_tables.py
 
-# ---------- 阶段 12：数据质量审计（不占关键路径，纯内部一致性检查）----------
+# ---------- 阶段 15：数据质量审计 ----------
 run_stage_or_stop 14_audit_data.py
 
-# ---------- 阶段 13：隐含 ROE 代理变量校验（要打网络，放最后）----------
+# ---------- 阶段 16：隐含 ROE 代理变量校验（要打网络，放最后）----------
 run_stage_or_stop 04_validate_roe.py
 
 echo

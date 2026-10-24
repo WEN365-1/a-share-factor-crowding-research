@@ -1,9 +1,10 @@
 """
 08_crowding.py —— 两个因子拥挤度测度（本文核心）
 
-测度 A（间接）：comomentum，严格按 Lou & Polk (2022) 的思路
-  —— 因子多空两端成分股在形成期内「FF3 残差收益的两两平均相关」，
-      用收益相关性间接推断有多少资金挤在同一个因子上。
+测度 A（间接）：comomentum 的日频两两相关版本
+  —— 因子多空两端成分股在形成期内「FF3 残差收益的抽样两两平均相关」。
+      该版本不做行业调整，也不是 Lou & Polk (2022) 的原文式剔除自身组合相关；
+      52 周、行业调整与剔除自身组合的忠实核心对照见 19_comomentum_faithful.py。
 
 测度 B（余额代理）：两融余额拥挤度
   —— 因子多空两端组合的融资余额变化强度，用公开可观测的杠杆融资余额近似资金拥挤。
@@ -26,7 +27,8 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import CLEAN, CFG, Gate, MARGIN, REPORTS, get_logger, heartbeat, now_local, read_parquet, write_parquet  # noqa: E402
+from common import (CLEAN, CFG, Gate, MARGIN, REPORTS, formation_universe, get_logger,  # noqa: E402
+                    heartbeat, now_local, read_parquet, write_parquet)
 
 log = get_logger("08_crowding", "08_crowding.log")
 FACTORS = ["VAL", "SMB", "MOM", "QMJ", "LOWVOL", "TURN"]
@@ -51,15 +53,19 @@ def load_daily() -> pd.DataFrame:
     return d.sort_values(["date", "code"]).reset_index(drop=True)
 
 
-def load_margin_monthly(trading_dates: pd.DatetimeIndex) -> pd.DataFrame:
+def load_margin_monthly(trading_dates: pd.DatetimeIndex,
+                        max_stale_days: int = 45) -> pd.DataFrame:
     """按保守 T+1 可得规则构造月末两融信号。
 
     原始明细的 ``date`` 被视为发生日；研究者最早在下一个交易日看到，
     因此 ``available_date`` 是交易日历中的下一交易日。月末信号只使用
     ``available_date <= signal_date`` 的最新余额，避免把月末收盘后才披露
     的余额用于同一月末形成信号。余额变化比较相邻月末的可得快照，而不是
-    两个不规则的原始观测日。
+    两个不规则的原始观测日。``max_stale_days`` 是可得快照的最大自然日龄；
+    45 天为主规格，90 天只在独立的敏感性检验中使用。
     """
+    if max_stale_days < 0:
+        raise ValueError("max_stale_days 必须是非负自然日数")
     files = sorted(MARGIN.rglob("*.parquet"))
     log.info(f"读取两融明细 {len(files)} 个文件")
     parts = []
@@ -103,12 +109,19 @@ def load_margin_monthly(trading_dates: pd.DatetimeIndex) -> pd.DataFrame:
         direction="backward", allow_exact_matches=True,
     )
     asof = asof.sort_values(["code", "ym"])
-    asof["d_mb"] = asof.groupby("code", observed=True)["margin_balance"].diff()
     asof["available_date"] = asof["available_date"].astype("datetime64[ns]")
+    asof["stale_days"] = (asof["signal_date"] - asof["available_date"]).dt.days
+    asof["has_history"] = True
+    asof["stale_excluded"] = asof["stale_days"] > max_stale_days
+    # 先记录无限 as-of 的陈旧状态，再把超期快照置为无效。差分也在置空后计算，
+    # 避免本月或上月使用陈旧余额时仍生成跨长缺口的“月度变化”。
+    asof.loc[asof["stale_excluded"], "margin_balance"] = np.nan
+    asof["d_mb"] = asof.groupby("code", observed=True)["margin_balance"].diff()
     log.info(f"两融月末 PIT 面板：{len(asof):,} 行 | 覆盖 {asof['code'].nunique()} 只股票 | "
-             f"{asof['ym'].nunique()} 个月；采用下一交易日可得规则")
+             f"{asof['ym'].nunique()} 个月；T+1 可得，余额快照最长 {max_stale_days} 个自然日；"
+             f"超期置空 {int(asof['stale_excluded'].sum()):,} 行")
     out = asof[["code", "ym", "signal_date", "available_date", "date",
-                "margin_balance", "d_mb"]]
+                "margin_balance", "d_mb", "stale_days", "has_history", "stale_excluded"]]
     audit = out.dropna(subset=["available_date"]).copy()
     if len(audit):
         lag = (audit["signal_date"] - audit["available_date"]).dt.days
@@ -199,6 +212,112 @@ def window_residuals(R: pd.DataFrame, X: pd.DataFrame, lo: int, hi: int) -> pd.D
     return pd.DataFrame(resid, index=Rw.index, columns=Rw.columns)
 
 
+def sampled_leg_correlation(Res: pd.DataFrame, codes: list[str], rng: np.random.Generator,
+                            sample_per_leg: int = SAMPLE_PER_LEG,
+                            min_per_leg: int = MIN_PER_LEG,
+                            min_pairs: int = MIN_PAIRS) -> dict:
+    """无放回抽取单端股票并计算两两完整残差相关的等权均值。
+
+    该函数是 08 主测度与多种子审计的唯一抽样实现。固定种子只保证可复现，
+    不消除测度抽样不确定性；后者必须由独立预先声明的种子分布另行评估。
+    """
+    eligible = [c for c in codes if c in Res.columns]
+    if len(eligible) < min_per_leg:
+        return {"correlation": np.nan, "n_eligible": len(eligible),
+                "n_sampled": 0, "n_pairs": 0}
+    sampled = (list(rng.choice(eligible, size=sample_per_leg, replace=False))
+               if len(eligible) > sample_per_leg else eligible)
+    C = Res[sampled].corr(min_periods=min_pairs).to_numpy()
+    iu = np.triu_indices_from(C, k=1)
+    values = C[iu]
+    values = values[np.isfinite(values)]
+    if values.size == 0:
+        return {"correlation": np.nan, "n_eligible": len(eligible),
+                "n_sampled": len(sampled), "n_pairs": 0}
+    return {"correlation": float(values.mean()), "n_eligible": len(eligible),
+            "n_sampled": len(sampled), "n_pairs": int(values.size)}
+
+
+def build_margin_crowding(monthly: pd.DataFrame, membership: pd.DataFrame,
+                          mg: pd.DataFrame) -> pd.DataFrame:
+    """由同一 T+1 月末快照面板构造融资强度、水平和双腿覆盖率。
+
+    主分析与敏感性检验必须调用这个函数，避免在稳健性脚本中另写一套
+    缺失值、权重或覆盖率规则。``mg`` 应来自 ``load_margin_monthly``。
+    """
+    if mg.empty:
+        return pd.DataFrame()
+    mg = mg.copy()
+    mg["ym"] = mg["ym"].astype(str)
+    base = monthly.copy()
+    base["ym"] = base["ym"].astype(str)
+    base = base.merge(
+        mg[["code", "ym", "d_mb", "margin_balance", "available_date",
+            "signal_date", "stale_days", "has_history", "stale_excluded"]],
+        on=["code", "ym"], how="left"
+    )
+    # 从未有过两融历史的股票是结构性零；有历史但当前/上期快照无效者保持缺失。
+    base["has_history"] = base["has_history"].fillna(False).astype(bool)
+    base["stale_excluded"] = base["stale_excluded"].fillna(False).astype(bool)
+    base["has_margin"] = base["margin_balance"].notna()
+    base["intensity"] = np.where(base["float_mv"] > 0,
+                                 base["d_mb"] / base["float_mv"], np.nan)
+    base.loc[~base["has_history"], "intensity"] = 0.0
+    base["level"] = np.where(base["float_mv"] > 0,
+                             base["margin_balance"] / base["float_mv"], np.nan)
+    base.loc[~base["has_history"], "level"] = 0.0
+
+    mm = membership.copy()
+    mm["ym"] = mm["ym"].astype(str)
+    bb = base.drop(columns=["float_mv"], errors="ignore")
+    merged = mm.merge(bb[["code", "ym", "d_mb", "margin_balance", "has_margin",
+                          "intensity", "level", "available_date", "signal_date",
+                          "stale_days", "has_history", "stale_excluded"]],
+                      on=["code", "ym"], how="left")
+
+    crowd_rows = []
+    for (ym, f), g in merged.groupby(["ym", "factor"], observed=True):
+        top = g[g["grp"] == N_GROUPS - 1]
+        bot = g[g["grp"] == 0]
+        if len(top) < MIN_PER_LEG or len(bot) < MIN_PER_LEG:
+            continue
+
+        def _leg(x: pd.DataFrame):
+            # 强度与水平只在有效观测上重新归一化；覆盖率始终用完整形成月腿权重。
+            w = x["float_mv"] / x["float_mv"].sum()
+
+            def weighted_valid(col: str) -> float:
+                valid = x[col].notna() & w.notna()
+                if not valid.any() or w[valid].sum() <= 0:
+                    return np.nan
+                return float((x.loc[valid, col] * w[valid]).sum() / w[valid].sum())
+
+            v = weighted_valid("intensity")
+            lv = weighted_valid("level")
+            cov = float((x["has_margin"].astype(float) * w).sum())
+            return v, lv, cov
+
+        v_t, l_t, c_t = _leg(top)
+        v_b, l_b, c_b = _leg(bot)
+        avail = pd.concat([top["available_date"], bot["available_date"]]).dropna()
+        signal = pd.concat([top["signal_date"], bot["signal_date"]]).dropna()
+        crowd_rows.append({"ym": ym, "factor": f,
+                           "crowd_margin": v_t - v_b,
+                           "crowd_margin_long": v_t,
+                           "level_margin": l_t - l_b,
+                           "cover_long": c_t, "cover_short": c_b,
+                           "signal_date": signal.iloc[0] if len(signal) else pd.NaT,
+                           "max_available_date": avail.max() if len(avail) else pd.NaT,
+                           "n_long": int(len(top)), "n_short": int(len(bot))})
+    crowd = pd.DataFrame(crowd_rows)
+    if len(crowd):
+        n0 = len(crowd)
+        crowd = crowd.drop_duplicates(["ym", "factor"], keep="first")
+        if len(crowd) != n0:
+            log.warning(f"两融拥挤度表有 {n0 - len(crowd)} 行重复的 (ym, factor)，已去重")
+    return crowd
+
+
 def main() -> None:
     gate = Gate(log)
     rng = np.random.default_rng(SEED)
@@ -214,10 +333,8 @@ def main() -> None:
     # ---------- 分组归属（月内固定）----------
     mem_rows = []
     for ym, g in monthly.groupby("ym", observed=True):
-        # 与 06 用同一条股票池规则：06 是先剔除「当月停牌超过 10 个交易日」的观测
-        # 再分十分位。08 若不过滤，拥挤度衡量的组合与主检验里真正持有并计算收益的
-        # 组合就不是同一个，"用拥挤度预测该因子未来收益"这句话就打了折扣。
-        g = g[g["n_days"] >= 10]
+        # 与 06 共用形成月信息集：不按未来收益筛选，短月份也按非交易日数判断。
+        g = formation_universe(g)
         for f in FACTORS:
             d = g.dropna(subset=[f])
             if len(d) < N_GROUPS * 5:
@@ -278,26 +395,14 @@ def main() -> None:
                 continue
             val = []
             for grp in (N_GROUPS - 1, 0):
-                # 多头端与空头端必须同时有效：只出一端会把单边相关当成两端差异
+                # 多头端与空头端必须同时有效：只出一端会把单边相关当成两端差异。
+                # 两两完整观测保留停牌缺口；抽样规则与多种子审计共用同一函数。
                 codes = sub[sub["grp"] == grp]["code"].tolist()
-                codes = [c for c in codes if c in Res.columns]
-                if len(codes) < MIN_PER_LEG:
+                leg = sampled_leg_correlation(Res, codes, rng)
+                if not np.isfinite(leg["correlation"]):
                     val = []
                     break
-                if len(codes) > SAMPLE_PER_LEG:
-                    codes = list(rng.choice(codes, size=SAMPLE_PER_LEG, replace=False))
-                # 用**两两完整**观测算相关，不要把含缺失的行整行丢掉。
-                # 真实数据里有停牌，100 只股票在 250 天窗口内几乎不可能全部无缺失；
-                # 整行 dropna 会把除 MOM 外的所有因子都判成"算不出"
-                # （MOM 幸存只是因为它的股票池本就限定在连续 12 个月有数据的股票上）。
-                C = Res[codes].corr(min_periods=MIN_PAIRS).to_numpy()
-                iu = np.triu_indices_from(C, k=1)
-                v = C[iu]
-                v = v[np.isfinite(v)]
-                if v.size == 0:
-                    val = []
-                    break
-                val.append(float(v.mean()))
+                val.append(leg["correlation"])
             if len(val) == 2:
                 com_rows.append({"ym": str(ym), "factor": f, "comomentum": float(np.mean(val)),
                                  "n_legs": len(val)})
@@ -314,68 +419,8 @@ def main() -> None:
     log.info(f"comomentum 表：{len(com)} 行")
 
     # ---------- 测度 B：两融拥挤度 ----------
-    mg = load_margin_monthly(daily_dates)
-    crowd_rows = []
-    if len(mg):
-        mg["ym"] = mg["ym"].astype(str)
-        base = monthly.copy()
-        base["ym"] = base["ym"].astype(str)
-        base = base.merge(
-            mg[["code", "ym", "d_mb", "margin_balance", "available_date",
-                "signal_date"]],
-            on=["code", "ym"], how="left"
-        )
-        base["has_margin"] = base["margin_balance"].notna()
-        base["intensity"] = np.where(base["float_mv"] > 0,
-                                     base["d_mb"] / base["float_mv"], np.nan)
-        # 两融水平：融资余额 / 流通市值。
-        # 必须作为控制变量，原因见下方 _leg 的注释——「变化」里含有「水平」的机械成分。
-        base["level"] = np.where(base["float_mv"] > 0,
-                                 base["margin_balance"] / base["float_mv"], np.nan)
-
-        # 与分组归属合并：membership 已按月按因子给出每只股票的十分位归属
-        mm = membership.copy()
-        mm["ym"] = mm["ym"].astype(str)
-        bb = base.drop(columns=["float_mv"], errors="ignore")
-        merged = mm.merge(bb[["code", "ym", "d_mb", "margin_balance", "has_margin",
-                              "intensity", "level", "available_date", "signal_date"]],
-                          on=["code", "ym"], how="left")
-
-        for (ym, f), g in merged.groupby(["ym", "factor"], observed=True):
-            if not gate.ok():
-                log.warning("闸门触发")
-                break
-            top = g[g["grp"] == N_GROUPS - 1]
-            bot = g[g["grp"] == 0]
-            if len(top) < MIN_PER_LEG or len(bot) < MIN_PER_LEG:
-                continue
-
-            def _leg(x: pd.DataFrame):
-                # 加权平均「融资余额变化强度」「两融水平」「覆盖率」
-                w = x["float_mv"] / x["float_mv"].sum()
-                v = (x["intensity"].fillna(0.0) * w).sum()
-                lv = (x["level"].fillna(0.0) * w).sum()
-                cov = (x["has_margin"].astype(float) * w).sum()
-                return float(v), float(lv), float(cov)
-
-            v_t, l_t, c_t = _leg(top)
-            v_b, l_b, c_b = _leg(bot)
-            avail = pd.concat([top["available_date"], bot["available_date"]]).dropna()
-            signal = pd.concat([top["signal_date"], bot["signal_date"]]).dropna()
-            crowd_rows.append({"ym": ym, "factor": f,
-                               "crowd_margin": v_t - v_b,        # 多头 − 空头
-                               "crowd_margin_long": v_t,          # 仅多头端
-                               "level_margin": l_t - l_b,         # 两融水平差（控制变量）
-                               "cover_long": c_t, "cover_short": c_b,
-                               "signal_date": signal.iloc[0] if len(signal) else pd.NaT,
-                               "max_available_date": avail.max() if len(avail) else pd.NaT,
-                               "n_long": int(len(top)), "n_short": int(len(bot))})
-    crowd = pd.DataFrame(crowd_rows)
-    if len(crowd):
-        n0 = len(crowd)
-        crowd = crowd.drop_duplicates(["ym", "factor"], keep="first")
-        if len(crowd) != n0:
-            log.warning(f"两融拥挤度表有 {n0 - len(crowd)} 行重复的 (ym, factor)，已去重")
+    mg = load_margin_monthly(daily_dates, max_stale_days=45)
+    crowd = build_margin_crowding(monthly, membership, mg)
 
     # ---------- 合并 ----------
     out = com.merge(crowd, on=["ym", "factor"], how="outer") if len(crowd) else com
