@@ -17,7 +17,7 @@ from statsmodels.stats.multitest import multipletests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (CLEAN, REPORTS, get_logger, hac_ols, now_local,  # noqa: E402
-                    placebo_pvalue, read_parquet, regression_frame)
+                    placebo_pvalue, read_parquet, regression_frame, time_index)
 
 log = get_logger("21_comomentum_robustness", "21_comomentum_robustness.log")
 MEASURES = ["comomentum", "comomentum_lp", "comomentum_lp_no_ind", "comomentum_lp_pair",
@@ -47,15 +47,18 @@ def build_panel():
 
 
 def estimate(df: pd.DataFrame, controls: list[str], measure: str, sample: str,
-             return_type: str, hac_lags: int) -> dict:
+             return_type: str, hac_lags: int, use_time: bool = True) -> dict:
     z = measure + "_z"
     y = "fwd12" if return_type == "sum" else "fwd12_comp"
     d = regression_frame(df.dropna(subset=[z, y] + controls))
     if len(d) < 40:
         raise ValueError(f"样本过小：{sample} {measure} {return_type} N={len(d)}")
     cols = [z] + controls
-    r = hac_ols(d[y].to_numpy(), d[cols].to_numpy(), cols, lags=hac_lags)
-    pp, ndraw = placebo_pvalue(d, cols, z, y, r[z]["t"], hac_lags=hac_lags)
+    # pooled（A 类）用 DK；MOM_only / 单因子切片（B 类）用普通 NW。
+    tvals = time_index(d["ym"]) if use_time else None
+    r = hac_ols(d[y].to_numpy(), d[cols].to_numpy(), cols, lags=hac_lags, time=tvals)
+    pp, ndraw = placebo_pvalue(d, cols, z, y, r[z]["t"], hac_lags=hac_lags,
+                               use_time=use_time)
     return {"sample": sample, "measure": measure, "horizon": 12,
             "return_type": return_type, "hac_lags": hac_lags,
             "beta": r[z]["coef"], "se": r[z]["se"], "t": r[z]["t"],
@@ -71,7 +74,8 @@ def main() -> None:
         for return_type in ["sum", "compound"]:
             for hac_lags in [6, 12]:
                 for measure in MEASURES:
-                    rows.append(estimate(frame, controls, measure, sample, return_type, hac_lags))
+                    rows.append(estimate(frame, controls, measure, sample, return_type, hac_lags,
+                                         use_time=(sample == "pooled")))
     out = pd.DataFrame(rows)
     keys = ["sample", "return_type", "hac_lags"]
     out["p_bonferroni_7"] = out.groupby(keys)["p_placebo"].transform(lambda s: (7 * s).clip(upper=1.0))

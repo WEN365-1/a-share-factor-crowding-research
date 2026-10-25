@@ -34,7 +34,9 @@ def main() -> None:
         frame = regression_frame(df[df["factor"] == factor])
         for return_type in ["sum", "compound"]:
             for measure in MEASURES:
-                row = module21.estimate(frame, controls, measure, factor, return_type, 12)
+                # 逐因子切片：每个 ym 只有一行 → B 类，普通 NW。
+                row = module21.estimate(frame, controls, measure, factor, return_type, 12,
+                                        use_time=False)
                 rows.append(row)
     out = pd.DataFrame(rows)
     out["p_bonferroni_6"] = out.groupby(["measure", "return_type"])["p_placebo"].transform(

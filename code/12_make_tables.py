@@ -128,7 +128,7 @@ def write(name: str, body: str, size: str = r"\small", sep: str = "2.5pt") -> No
     TABDIR.mkdir(parents=True, exist_ok=True)
     # 表格按自然宽度排版（不用 resizebox 拉满行宽：小表会被吹大、大表被压小）；
     # 宽表用更小字号或更小列距。
-    if name.startswith("table"):
+    if name.startswith(("table", "supp_")):
         body = ("\\begingroup" + size + "\\setlength{\\tabcolsep}{" + sep + "}\n"
                 + body + "\n\\endgroup")
     (TABDIR / name).write_text(body, encoding="utf-8")
@@ -544,10 +544,13 @@ def write_tpt(name: str, lines: list[str], notes: str, size: str = r"\small",
 
 
 def perm_note(nmin: int, nmax: int) -> str:
-    return (f"Permutation $p$-values equal $(1+B_{{\\geq}})/(1+B)$ over $B={nmin}$--${nmax}$ "
+    btxt = f"$B={nmin}$" if nmin == nmax else f"$B={nmin}$--${nmax}$"
+    ptxt = (f"$1/(1+B)\\approx{1/(1+nmax):.4f}$" if nmin == nmax
+            else f"$1/(1+B)\\approx{1/(1+nmax):.4f}$--${1/(1+nmin):.4f}$")
+    return (f"Permutation $p$-values equal $(1+B_{{\\geq}})/(1+B)$ over {btxt} "
             "within-factor circular shifts of the crowding measure, holding the sample, "
             "controls, estimator, and HAC lag fixed; the smallest attainable value is "
-            f"$1/(1+B)\\approx{1/(1+nmax):.4f}$--${1/(1+nmin):.4f}$.")
+            f"{ptxt}.")
 
 
 SPEC_NOTE = ("Specification A includes factor fixed effects; B adds the factor's past 1-, 6-, "
@@ -577,12 +580,39 @@ def table_main() -> None:
     nb = dD["n_placebo"].dropna().astype(int)
     notes = ("The dependent variable is the sum of the next $h$ monthly long--short factor "
              "returns. Crowding measures are standardised by their pooled standard deviation. "
-             + SPEC_NOTE + "Each cell reports $\\beta$, the HAC $t$-statistic in brackets "
-             "(Newey--West lags 6; 12 for $h=12$), and the permutation $p$-value in parentheses. "
+             + SPEC_NOTE + "Each cell reports $\\beta$, the Driscoll--Kraay $t$-statistic in brackets "
+             "(six monthly lags; twelve for $h=12$), and the permutation $p$-value in parentheses. "
              f"Specification D uses {int(dD[dD.horizon==1]['n'].iloc[0])} ($h=1$) to "
              f"{int(dD[dD.horizon==12]['n'].iloc[0])} ($h=12$) factor-months, 2016--2025. "
              + perm_note(nb.min(), nb.max()) + " " + STAR_NOTE)
     write_tpt("table2_main.tex", out, notes, size=r"\small", sep="6pt")
+
+
+def table_family() -> None:
+    """主检验族（2 测度 × h∈{1,3,6}）的 max-|t| 联合置换校正表。"""
+    d = pd.read_csv(REPORTS / "rev_family_maxT.csv")
+    out = [r"\begin{tabular}{llcccc}", r"\toprule",
+           r"Measure & $h$ & $t$ & Unadj.\ $p$ & Single-step maxT $p$ & Stepdown $p$ \\",
+           r"\midrule"]
+    for k, meas in enumerate(["comomentum", "crowd_margin"]):
+        if k:
+            out.append(r"\midrule")
+        sub = d[d["measure"] == meas].sort_values("horizon")
+        for i, (_, r) in enumerate(sub.iterrows()):
+            out.append(f"{en(meas) if i == 0 else ''} & {int(r['horizon'])} & "
+                       f"{r['t']:.2f} & {pfmt(r['p_unadj'])} & {pfmt(r['p_maxT_single'])} & "
+                       f"{pfmt(r['p_maxT_stepdown'])} \\\\")
+    out += [r"\bottomrule", r"\end{tabular}"]
+    K = int(d["K"].iloc[0])
+    notes = ("The family contains the two measures at $h\\in\\{1,3,6\\}$, six tests in total. All "
+             "tests use specification D, Driscoll--Kraay standard errors with six monthly lags, "
+             "and the same within-factor circular-shift permutations. The unadjusted column is "
+             "the single-test permutation $p$-value; the single-step maxT column uses the "
+             "maximum $|t|$ across the six tests in each permutation; the stepdown column is the "
+             "Westfall--Young stepdown adjustment, which is monotone in $|t|$. The joint null "
+             f"distribution uses $K={K}$ permutations in which both measures are shifted by the "
+             "same within-factor offset, preserving their contemporaneous correlation.")
+    write_tpt("table_family.tex", out, notes, size=r"\small", sep="5pt")
 
 
 def table6() -> None:
@@ -643,7 +673,9 @@ def table_mechanism() -> None:
              "capitalisation, current-month return, and MAX (the largest daily return in month "
              "$t$). The sample comprises margin-eligible stocks with valid balance snapshots that "
              "are in the bottom (short-leg) or top (long-leg) decile of any of the six factors at "
-             "formation. High-MAX stocks have MAX above the leg's monthly median. The share row "
+             "formation. High-MAX stocks have MAX above the leg's monthly median. The difference "
+             "row is the coefficient on the interaction of financing intensity with the high-MAX "
+             "indicator, i.e.\\ the high-minus-low MAX difference. The share row "
              "uses the monthly median MAX of all margin-eligible stocks. Newey--West (6 lags) "
              "$t$-statistics are in brackets.")
     write_tpt("table10_mechanism.tex", out, notes, size=r"\small", sep="8pt")
@@ -767,11 +799,511 @@ def table_robust() -> None:
 
 
 
+# ======================================================================
+# 2026-10-25 B1：Online Supplement 表格（S1--S10）
+# 只写 supp_*.tex，不覆盖正文表；数值全部来自 reports/ 下的 CSV。
+# ======================================================================
+
+SUPP_FACTORS = ["VAL", "SMB", "MOM", "QMJ", "LOWVOL", "TURN"]
+SUPP_FACTOR_LABEL = {
+    "VAL": "Value", "SMB": "Size", "MOM": "Momentum",
+    "QMJ": "Quality", "LOWVOL": "Low volatility", "TURN": "Low turnover",
+}
+SUPP_LP_LABEL = {
+    "comomentum": "Daily comomentum",
+    "comomentum_lp": "Weekly LP analogue",
+    "comomentum_lp_no_ind": "Weekly LP, no industry adjustment",
+    "comomentum_lp_pair": "Weekly LP, pairwise correlation",
+    "comomentum_lp_full52": "Weekly LP, full 52-week window",
+    "comomentum_lp_screen": "Weekly LP, screened",
+    "comomentum_lp_screen_full52": "Weekly LP, screened, full 52 weeks",
+}
+
+
+def supp_note(extra: str) -> str:
+    return extra.rstrip() + " " + STAR_NOTE
+
+
+def supp_corr() -> None:
+    p = REPORTS / "crowding_correlation.csv"
+    if not p.exists():
+        log.warning("缺 crowding_correlation.csv，跳过 supp_corr")
+        return
+    d = pd.read_csv(p)
+    out = [r"\begin{tabular}{lccccc}", r"\toprule",
+           r"Factor & $N$ & Pearson & Spearman & Mean comomentum & Mean margin-balance proxy \\",
+           r"\midrule"]
+    for _, r in d.iterrows():
+        f = str(r["factor"])
+        lab = SUPP_FACTOR_LABEL.get(f, en(f))
+        if "POOLED" in f:
+            lab = f"\\textit{{{lab}}}"
+        out.append(f"{lab} & {int(r['n_months'])} & {num(r['pearson'],3)} & "
+                   f"{num(r['spearman'],3)} & {num(r['comomentum_mean'],5)} & "
+                   f"{num(r['crowd_mean'],4)} \\\\")
+    out += [r"\bottomrule", r"\end{tabular}"]
+    notes = ("Sample: monthly factor returns for six factors, 2016--2025 (120 months per factor; "
+             "720 factor-months pooled). Pearson and Spearman correlations are computed "
+             "within factor between the daily comomentum measure and the margin-balance proxy. "
+             "The pooled row stacks factor-months; the factor-demeaned row removes factor means "
+             "before pooling. No regression specification is estimated and no stars are used; "
+             "permutation $p$-values are not applicable to this descriptive table.")
+    write_tpt("supp_corr.tex", out, notes, size=r"\footnotesize")
+
+
+def supp_main_inference() -> None:
+    p = REPORTS / "table2_main.csv"
+    if not p.exists():
+        log.warning("缺 table2_main.csv，跳过 supp_main_t")
+        return
+    d = pd.read_csv(p)
+    specs = ["A", "B", "C", "D"]
+    horizons = sorted(d["horizon"].unique())
+    out = [r"\begin{tabular}{ll" + "cc" * len(specs) + "}", r"\toprule",
+           r" & & " + " & ".join(rf"\multicolumn{{2}}{{c}}{{{s}}}" for s in specs) + r" \\",
+           "".join(rf"\cmidrule(lr){{{3 + 2*i}-{4 + 2*i}}}" for i in range(len(specs))),
+           r"Measure & $h$ & " + " & ".join([r"$t$ & $p$"] * len(specs)) + r" \\",
+           r"\midrule"]
+    for k, meas in enumerate(["comomentum", "crowd_margin"]):
+        if k:
+            out.append(r"\midrule")
+        sub = d[d["measure"] == meas]
+        for h in horizons:
+            cells = []
+            for spec in specs:
+                c = sub[(sub["horizon"] == h) & (sub["spec"] == spec)].iloc[0]
+                cells += [f"{c['t']:.2f}", pfmt(c["p_placebo"])]
+            out.append(f"{en(meas) if h == horizons[0] else ''} & {h} & "
+                       + " & ".join(cells) + r" \\")
+    out += [r"\bottomrule", r"\end{tabular}"]
+    nb = d[d["spec"] == "D"]["n_placebo"].dropna().astype(int)
+    notes = ("The dependent variable is the sum of the next $h$ monthly long--short factor "
+             "returns. All regressions use specification A--D exactly as in the main text: A "
+             "includes factor fixed effects; B adds the factor's past 1-, 6-, and 12-month "
+             "returns; C adds the margin-balance level; D adds long- and short-leg margin "
+             "coverage. Columns report the Driscoll--Kraay $t$-statistic (six monthly lags; "
+             "twelve for $h=12$) and the within-factor circular-shift permutation $p$-value "
+             f"side by side. Specification D uses 699 ($h=1$) to 633 ($h=12$) factor-months, "
+             "2016--2025. " + perm_note(int(nb.min()), int(nb.max()))
+             + " No stars are used in this inference table.")
+    write_tpt("supp_main_t.tex", out, notes, size=r"\footnotesize", sep="3pt")
+
+
+def supp_orth() -> None:
+    p = REPORTS / "table3_orthogonalization.csv"
+    if not p.exists():
+        log.warning("缺 table3_orthogonalization.csv，跳过 supp_orth")
+        return
+    d = pd.read_csv(p)
+    layers = list(d["layer"].dropna().unique())
+    l1 = [x for x in layers if x.startswith("①")][0]
+    l2 = [x for x in layers if x.startswith("②因子内")][0]
+    l2s = [x for x in layers if x.startswith("②六因子")][0]
+    l3 = [x for x in layers if x.startswith("③")][0]
+    horizons = sorted(d["horizon"].unique())
+    out = [r"\begin{tabular}{lllcccc}", r"\toprule",
+           r"Measure & Specification & $h$ & $\beta$ & HAC $t$ & Perm. $p$ & $N$ \\",
+           r"\midrule",
+           r"\multicolumn{7}{l}{\textit{Panel A: Layer 1, orthogonalised residual}} \\"]
+    for meas in ["comomentum", "crowd_margin"]:
+        for h in horizons:
+            r = d[(d["measure"] == meas) & (d["layer"] == l1) & (d["horizon"] == h)].iloc[0]
+            out.append(f"{en(meas) if h == horizons[0] else ''} & Layer 1 & {h} & "
+                       f"{cell(r['beta'], r['p_placebo'])} & {r['t']:.2f} & "
+                       f"{pfmt(r['p_placebo'])} & {int(r['n'])} \\\\")
+    out += [r"\midrule",
+            r"\multicolumn{7}{l}{\textit{Panel B: Layer 3, all controls entered simultaneously}} \\"]
+    for meas in ["comomentum", "crowd_margin"]:
+        for h in horizons:
+            r = d[(d["measure"] == meas) & (d["layer"] == l3) & (d["horizon"] == h)].iloc[0]
+            out.append(f"{en(meas) if h == horizons[0] else ''} & Layer 3 & {h} & "
+                       f"{cell(r['beta'], r['p_placebo'])} & {r['t']:.2f} & "
+                       f"{pfmt(r['p_placebo'])} & {int(r['n'])} \\\\")
+    out += [r"\midrule",
+            r"\multicolumn{7}{l}{\textit{Panel C: Layer 2, within-factor time series ($h=1$)}} \\"]
+    for meas in ["comomentum", "crowd_margin"]:
+        sub = d[(d["measure"] == meas) & (d["layer"] == l2)]
+        for f in SUPP_FACTORS:
+            hit = sub[sub["note"].str.contains(f"因子 {f}", na=False)]
+            if hit.empty:
+                continue
+            r = hit.iloc[0]
+            out.append(f"{en(meas) if f == SUPP_FACTORS[0] else ''} & Layer 2: {f} & 1 & "
+                       f"{cell(r['beta'], r['p_placebo'])} & {r['t']:.2f} & "
+                       f"{pfmt(r['p_placebo'])} & {int(r['n'])} \\\\")
+        sm = d[(d["measure"] == meas) & (d["layer"] == l2s)]
+        if not sm.empty:
+            r = sm.iloc[0]
+            out.append(f" & Layer 2: mean slope & {int(r['horizon'])} & {r['beta']:.4f} & "
+                       f"{r['t']:.2f} & -- & {int(r['n'])} \\\\")
+    out += [r"\bottomrule", r"\end{tabular}"]
+    nb = d["n"].dropna()
+    notes = ("Sample: monthly factor returns for six factors, 2016--2025. Layer 1 replaces the "
+             "crowding measure with its residual after projecting it on factor momentum and the "
+             "margin-balance level; Layer 3 enters all controls simultaneously; Layer 2 runs a "
+             "separate within-factor time-series regression controlling for the factor's own past "
+             "1-, 6-, and 12-month returns and the margin-balance level. Layer 2 factor-specific "
+             "rows are available at $h=1$ only in the source output and have small samples; the "
+             "mean-slope row is directional and is not given a significance claim. Panel A and "
+             "Panel B are estimated at $h\\in\\{1,3,6,12\\}$. HAC $t$-statistics use six monthly "
+             "lags (twelve for $h=12$); permutation $p$-values use within-factor circular shifts. "
+             + perm_note(95, 106)
+             + " Stars use permutation $p$-values: * $p<0.10$, ** $p<0.05$, *** $p<0.01$.")
+    write_tpt("supp_orth.tex", out, notes, size=r"\footnotesize", sep="2pt")
+
+
+def supp_flow_horse() -> None:
+    p = REPORTS / "table11_flow_proxy.csv"
+    if not p.exists():
+        log.warning("缺 table11_flow_proxy.csv，跳过 supp_flow_horse")
+        return
+    d = pd.read_csv(p)
+    d = d[d["analysis"] == "horse race"]
+    out = [r"\begin{tabular}{llcccc}", r"\toprule",
+           r"Measure & $h$ & $\beta$ & HAC $t$ & Perm. $p$ & $N$ \\", r"\midrule"]
+    for meas in d["measure"].unique():
+        sub = d[d["measure"] == meas].sort_values("horizon")
+        for i, (_, r) in enumerate(sub.iterrows()):
+            out.append(f"{en(meas) if i == 0 else ''} & {int(r['horizon'])} & "
+                       f"{cell(r['beta'], r['p_placebo'])} & {r['t']:.2f} & "
+                       f"{pfmt(r['p_placebo'])} & {int(r['n'])} \\\\")
+    out += [r"\bottomrule", r"\end{tabular}"]
+    notes = ("Sample: monthly factor returns, 2016--2025. Each row comes from a horse race that "
+             "enters one float-weighted financing-flow measure (long leg minus short leg), the "
+             "margin-balance proxy, specification-D controls, and the flow measure's own trailing "
+             "twelve-month mean; only the flow coefficient is reported. Purchase flows cover both "
+             "exchanges, whereas net flows (purchases less repayments) are available for Shanghai "
+             "only. HAC $t$-statistics use six monthly lags (twelve for $h=12$). "
+             + perm_note(95, 106)
+             + " Stars use permutation $p$-values: * $p<0.10$, ** $p<0.05$, *** $p<0.01$.")
+    write_tpt("supp_flow_horse.tex", out, notes, size=r"\footnotesize")
+
+
+def supp_dist() -> None:
+    pq = REPORTS / "table4_quantile.csv"
+    pt = REPORTS / "table4_tail.csv"
+    if not pq.exists() or not pt.exists():
+        log.warning("缺 table4_quantile.csv 或 table4_tail.csv，跳过 supp_dist")
+        return
+    dq = pd.read_csv(pq)
+    pa = [r"\begin{tabular}{llcccc}", r"\toprule",
+          r"Measure & Quantile & Coefficient & HAC $t$ & Perm. $p$ & $N$ \\", r"\midrule"]
+    for meas in dq["measure"].unique():
+        sub = dq[dq["measure"] == meas].sort_values("quantile")
+        for i, (_, r) in enumerate(sub.iterrows()):
+            pa.append(f"{en(meas) if i == 0 else ''} & {r['quantile']:.2f} & "
+                      f"{r['coef']:.4f}{stars(r['p_placebo'])} & {r['t']:.2f} & "
+                      f"{pfmt(r['p_placebo'])} & {int(r['n'])} \\\\")
+    pa += [r"\bottomrule", r"\end{tabular}"]
+
+    dt = pd.read_csv(pt)
+    pb = [r"\begin{tabular}{lllcccccc}", r"\toprule",
+          r"Measure & Factor & Crowding & Mean & SD & Skew. & Kurt. & Crash freq. & $N$ \\",
+          r"\midrule"]
+    for meas in dt["measure"].unique():
+        sub = dt[dt["measure"] == meas]
+        for i, (_, r) in enumerate(sub.iterrows()):
+            for j, side in enumerate(["高拥挤_", "低拥挤_"]):
+                pb.append(f"{en(meas) if (i == 0 and j == 0) else ''} & "
+                          f"{SUPP_FACTOR_LABEL.get(str(r['factor']), en(r['factor']))} & "
+                          f"{'High' if j == 0 else 'Low'} & "
+                          f"{num(r[side + '均值'],4)} & {num(r[side + '标准差'],4)} & "
+                          f"{num(r[side + '偏度'],2)} & {num(r[side + '峰度'],2)} & "
+                          f"{num(r[side + '崩溃频率'],3)} & {int(r['n'])} \\\\")
+        pb.append(r"\midrule")
+    pb[-1] = r"\bottomrule"
+    pb.append(r"\end{tabular}")
+
+    notes = ("Panel A reports pooled quantile regressions of the next-month long--short factor "
+             "return on the standardised crowding measure with factor fixed effects; the "
+             "asymptotic $t$-statistic is shown, and inference uses within-factor circular-shift "
+             "permutation $p$-values. Panel B is descriptive: within each factor, high- and "
+             "low-crowding months are split at the factor-specific median of the measure; crash "
+             "frequency is the share of months with a long--short return at or below the "
+             "factor-specific 5th percentile. The sample is 2016--2025. Panel A permutation "
+             "p-values use the pooled panel with factor fixed effects re-estimated for every "
+             "shift. " + perm_note(int(dq["n_placebo"].min()), int(dq["n_placebo"].max()))
+             + " Panel B has no specification, no permutation $p$-values, and no stars. Stars in "
+             "Panel A use permutation $p$-values: * $p<0.10$, ** $p<0.05$, *** $p<0.01$.")
+    write_tpt("supp_dist.tex", pa + [r"\par\medskip"] + pb, notes, size=r"\scriptsize", sep="2pt")
+
+
+def supp_volatility() -> None:
+    p = REPORTS / "table7_volatility.csv"
+    if not p.exists():
+        log.warning("缺 table7_volatility.csv，跳过 supp_volatility")
+        return
+    d = pd.read_csv(p)
+    horizons = sorted(d["horizon"].unique())
+    targets = [("波动", "Volatility"), ("偏度", "Skewness")]
+    out = [r"\begin{tabular}{llcccc}", r"\toprule"]
+    for k, (field, title) in enumerate((("beta", "Panel A: coefficient"),
+                                       ("p_placebo", "Panel B: permutation $p$-value"))):
+        if k:
+            out.append(r"\midrule")
+        out.append(rf"\multicolumn{{5}}{{l}}{{\textit{{{title}}}}} \\")
+        out.append(r"Measure & $h$ & Volatility & Skewness & $N$ \\")
+        out.append(r"\midrule")
+        for meas in d["measure"].unique():
+            for h in horizons:
+                cells, n = [], ""
+                for key, _ in targets:
+                    r = d[(d["measure"] == meas) & (d["horizon"] == h) & (d["target"] == key)]
+                    if r.empty:
+                        cells.append("--")
+                        continue
+                    r = r.iloc[0]
+                    n = int(r["n"])
+                    cells.append(f"{r['beta']:.4f}{stars(r['p_placebo'])}" if field == "beta"
+                                 else pfmt(r["p_placebo"]))
+                out.append(f"{en(meas) if h == horizons[0] else ''} & {h} & "
+                           + " & ".join(cells) + f" & {n} \\\\")
+    out += [r"\bottomrule", r"\end{tabular}"]
+    notes = ("Sample: monthly factor returns for six factors, 2016--2025. The dependent "
+             "variables are realised volatility and skewness of the factor long--short return "
+             "over the next $h$ months, computed from daily returns. Each regression includes "
+             "factor fixed effects and the standardised crowding measure; no past-return controls "
+             "are included. HAC $t$-statistics use six monthly lags. Panel B reports "
+             "within-factor circular-shift permutation $p$-values. "
+             + perm_note(101, 106)
+             + " Stars in Panel A use permutation $p$-values: * $p<0.10$, ** $p<0.05$, "
+             "*** $p<0.01$.")
+    write_tpt("supp_volatility.tex", out, notes, size=r"\footnotesize")
+
+
+def supp_formation() -> None:
+    p = REPORTS / "formation_robustness_regressions.csv"
+    pt = REPORTS / "terminal_return_regressions.csv"
+    if not p.exists() or not pt.exists():
+        log.warning("缺 formation/terminal 回归 CSV，跳过 supp_formation")
+        return
+    form = pd.read_csv(p)
+    term = pd.read_csv(pt)
+    prod = form[form["variant"] == "production"]
+    prod2 = term[term["variant"] == "production"]
+    merged = prod.merge(prod2, on=["measure", "horizon"], suffixes=("_f", "_t"))
+    if not np.allclose(merged["beta_f"], merged["beta_t"], atol=1e-12):
+        log.warning("formation 与 terminal 的 production 行不一致；supp_formation 仍按 formation 行报告")
+    variants = [
+        ("production", "Production"),
+        ("daily_leg_buy_hold", "Frozen-weight daily legs"),
+        ("common_month_end_partial", "Common month-end (partial)"),
+        ("raw_realized", r"Raw realisations incl.\ ST days"),
+        ("terminal_zero_stress", r"Terminal 0\% stress"),
+        ("terminal_total_loss_stress", r"Terminal $-100\%$ stress"),
+    ]
+    pieces = [form[form["variant"].isin(["production", "daily_leg_buy_hold",
+                                        "common_month_end_partial"])],
+              term[term["variant"].isin(["raw_realized", "terminal_zero_stress",
+                                         "terminal_total_loss_stress"])]]
+    d = pd.concat(pieces, ignore_index=True)
+    horizons = [1, 3, 6, 12]
+    out = [r"\begin{tabular}{llcccc}", r"\toprule",
+           r"Variant & Measure & $h=1$ & $h=3$ & $h=6$ & $h=12$ \\", r"\midrule"]
+    for variant, lab in variants:
+        for meas in ["comomentum", "crowd_margin"]:
+            cells = []
+            for h in horizons:
+                r = d[(d["variant"] == variant) & (d["measure"] == meas) & (d["horizon"] == h)]
+                if r.empty:
+                    cells.append("--")
+                    continue
+                r = r.iloc[0]
+                cells.append(r"\shortstack{" + f"{r['beta']:.4f}{stars(r['p_placebo'])}"
+                             + r"\\(" + pfmt(r["p_placebo"]) + r")}")
+            out.append(f"{lab if meas == 'comomentum' else ''} & {en(meas)} & "
+                       + " & ".join(cells) + r" \\")
+    out += [r"\bottomrule", r"\end{tabular}"]
+    nb = pd.concat([form["n_placebo"], term["n_placebo"]]).dropna().astype(int)
+    notes = ("All rows use specification D and the main permutation procedure. The frozen-weight, "
+             "common-month-end, and raw-realisation variants change portfolio formation or return "
+             "realisation: frozen formation weights with compounded daily returns; a partial common "
+             "month-end that changes membership and returns but retains production crowding and "
+             "coverage controls; and raw realisations that retain subsequent ST trading days. The "
+             "terminal rows apply a 0\\% or "
+             "$-100\\%$ payoff to unobserved in-holding-month terminal events and are stress "
+             "scenarios, not estimated payoffs. Each cell reports $\\beta$, starred by the "
+             "permutation $p$-value, with the permutation $p$-value in parentheses below. "
+             "Horizons are 1, 3, 6, and 12 months; sample sizes are 699, 687, 669, and 633 "
+             "factor-months. " + perm_note(int(nb.min()), int(nb.max()))
+             + " Stars use permutation $p$-values: * $p<0.10$, ** $p<0.05$, *** $p<0.01$.")
+    write_tpt("supp_formation.tex", out, notes, size=r"\footnotesize", sep="2pt")
+
+
+def supp_weekly() -> None:
+    p = REPORTS / "comomentum_h12_robustness.csv"
+    pf = REPORTS / "comomentum_h12_factor_slopes.csv"
+    if not p.exists() or not pf.exists():
+        log.warning("缺 comomentum_h12 CSV，跳过 supp_weekly")
+        return
+    d = pd.read_csv(p)
+    sl = pd.read_csv(pf)
+    d = d[(d["return_type"] == "compound") & (d["hac_lags"] == 12)]
+    sl = sl[(sl["return_type"] == "compound") & (sl["hac_lags"] == 12)]
+    order = ["comomentum", "comomentum_lp", "comomentum_lp_no_ind", "comomentum_lp_pair",
+             "comomentum_lp_full52", "comomentum_lp_screen", "comomentum_lp_screen_full52"]
+    out = [r"\begin{tabular}{lcccccc}", r"\toprule",
+           r"Construction & $\beta$ & HAC $t$ & Perm. $p$ & Bonf. $p$ (7) & BH $q$ (7) & $N$ \\",
+           r"\midrule",
+           r"\multicolumn{7}{l}{\textit{Panel A: pooled twelve-month compounded returns}} \\"]
+    for k, meas in enumerate(order):
+        r = d[(d["sample"] == "pooled") & (d["measure"] == meas)].iloc[0]
+        out.append(f"{SUPP_LP_LABEL[meas]} & {r['beta']:.4f}{stars(r['p_placebo'])} & "
+                   f"{r['t']:.2f} & {pfmt(r['p_placebo'])} & {pfmt(r['p_bonferroni_7'])} & "
+                   f"{pfmt(r['p_bh_7'])} & {int(r['n'])} \\\\")
+    out += [r"\midrule",
+            r"\multicolumn{7}{l}{\textit{Panel B: momentum-only twelve-month compounded returns}} \\"]
+    for meas in order:
+        r = d[(d["sample"] == "MOM_only") & (d["measure"] == meas)].iloc[0]
+        out.append(f"{SUPP_LP_LABEL[meas]} & {r['beta']:.4f}{stars(r['p_placebo'])} & "
+                   f"{r['t']:.2f} & {pfmt(r['p_placebo'])} & {pfmt(r['p_bonferroni_7'])} & "
+                   f"{pfmt(r['p_bh_7'])} & {int(r['n'])} \\\\")
+    out += [r"\midrule",
+            r"\multicolumn{7}{l}{\textit{Panel C: factor-specific slopes, twelve-month compounded returns}} \\"]
+    order_c = ["comomentum", "comomentum_lp", "comomentum_lp_screen"]
+    short_c = {"comomentum": "Daily", "comomentum_lp": "LP", "comomentum_lp_screen": "LP screened"}
+    for f in SUPP_FACTORS:
+        for meas in order_c:
+            r = sl[(sl["sample"] == f) & (sl["measure"] == meas)].iloc[0]
+            lab = f"{SUPP_FACTOR_LABEL[f]}: {short_c[meas]}"
+            out.append(f"{lab} & {r['beta']:.4f}{stars(r['p_placebo'])} & {r['t']:.2f} & "
+                       f"{pfmt(r['p_placebo'])} & {pfmt(r['p_bonferroni_6'])} & "
+                       f"{pfmt(r['p_bh_6'])} & {int(r['n'])} \\\\")
+    out += [r"\bottomrule", r"\end{tabular}"]
+    notes = ("Sample: monthly factor returns, 2016--2025. Panel A pools the six factors; Panel B "
+             "uses momentum only; Panel C reports one time-series slope per factor. The dependent "
+             "variable is the twelve-month compounded long--short return. All constructions use "
+             "specification-D controls and $h=12$ with twelve HAC lags. The daily measure and six "
+             "weekly Lou--Polk-style analogues are described by their labels; the seven-construction "
+             "family in Panels A and B comprises all rows in the table, and the factor-specific "
+             "family in Panel C comprises the six factors within each construction. Panel C "
+             "abbreviates daily comomentum as ``Daily'', the weekly analogue as ``LP'', and the "
+             "screened weekly analogue as ``LP screened''. Pooled rows use Driscoll--Kraay "
+             "standard errors; momentum-only and factor-specific rows use ordinary Newey--West "
+             "standard errors, as in the source output. Permutation $p$-values are within-factor "
+             "circular shifts. Bonferroni and Benjamini--Hochberg adjustments are computed within "
+             "the stated families and do not replace the raw permutation $p$-value. "
+             + perm_note(int(d["n_placebo"].min()), int(d["n_placebo"].max()))
+             + " Stars use raw permutation $p$-values: * $p<0.10$, ** $p<0.05$, *** $p<0.01$.")
+    write_tpt("supp_weekly.tex", out, notes, size=r"\footnotesize", sep="2pt")
+
+
+def supp_secondmoment() -> None:
+    p = REPORTS / "lp_second_moments.csv"
+    pm = REPORTS / "lp_second_moments_MOM.csv"
+    if not p.exists() or not pm.exists():
+        log.warning("缺 lp_second_moments CSV，跳过 supp_secondmoment")
+        return
+    pooled = pd.read_csv(p)
+    mom = pd.read_csv(pm)
+    targets = [("daily_vol", "Realised volatility (daily)"),
+               ("weekly_skew", "Return skewness (weekly)"),
+               ("weekly_bad_share", "Bad-week share (weekly)")]
+    measures = ["comomentum_lp", "comomentum_lp_screen"]
+    out = [r"\begin{tabular}{llcccc}", r"\toprule",
+           r"Target & Measure & $h=1$ & $h=3$ & $h=6$ & $h=12$ \\", r"\midrule"]
+    for k, (frame, lab) in enumerate(((pooled, "Panel A: pooled six factors"),
+                                      (mom, "Panel B: momentum only"))):
+        if k:
+            out.append(r"\midrule")
+        out.append(rf"\multicolumn{{6}}{{l}}{{\textit{{{lab}}}}} \\")
+        out.append(r"\midrule")
+        for key, target_lab in targets:
+            for meas in measures:
+                cells = []
+                for h in [1, 3, 6, 12]:
+                    r = frame[(frame["target"] == key) & (frame["horizon"] == h)
+                              & (frame["measure"] == meas)]
+                    if r.empty:
+                        cells.append("--")
+                        continue
+                    r = r.iloc[0]
+                    cells.append(r"\shortstack{" + f"{r['beta']:.4f}{stars(r['p_placebo'])}"
+                                 + r"\\(" + pfmt(r["p_placebo"]) + r")}")
+                out.append(f"{target_lab if meas == measures[0] else ''} & "
+                           f"{SUPP_LP_LABEL[meas]} & " + " & ".join(cells) + r" \\")
+    out += [r"\midrule",
+            r"\multicolumn{6}{l}{\textit{Panel C: pooled twelve-month corrections}} \\",
+            r"Target & Measure & $\beta$ & Perm. $p$ & BH $q$ & Bonf. $p$ \\", r"\midrule"]
+    for key, target_lab in targets:
+        for meas in measures:
+            r = pooled[(pooled["target"] == key) & (pooled["horizon"] == 12)
+                       & (pooled["measure"] == meas)].iloc[0]
+            out.append(f"{target_lab if meas == measures[0] else ''} & {SUPP_LP_LABEL[meas]} & "
+                       f"{r['beta']:.4f}{stars(r['p_placebo'])} & {pfmt(r['p_placebo'])} & "
+                       f"{pfmt(r['p_bh'])} & {pfmt(r['p_bonferroni'])} \\\\")
+    out += [r"\bottomrule", r"\end{tabular}"]
+    notes = ("Sample: monthly factor returns, 2016--2025; Panel A pools six factors and Panel B "
+             "uses momentum only. The weekly Lou--Polk-style analogue and its screened variant are "
+             "standardised and entered with specification-D controls. Targets are realised daily "
+             "volatility, weekly return skewness, and the share of weeks with a return below "
+             "$-5\\%$; weekly targets are available only at $h=6$ and $h=12$. Each cell in Panels "
+             "A and B reports $\\beta$, starred by the permutation $p$-value, with the permutation "
+             "$p$-value in parentheses. Panel C reports the raw permutation $p$-value, the "
+             "Benjamini--Hochberg $q$-value, and the Bonferroni $p$-value within the four-measure "
+             "family for each target at $h=12$. HAC standard errors use twelve monthly lags. "
+             "Pooled rows use Driscoll--Kraay standard errors; momentum-only rows use ordinary "
+             "Newey--West standard errors. " + perm_note(int(pooled["n_placebo"].min()),
+                                                           int(pooled["n_placebo"].max()))
+             + " Stars use raw permutation $p$-values: * $p<0.10$, ** $p<0.05$, *** $p<0.01$.")
+    write_tpt("supp_secondmoment.tex", out, notes, size=r"\footnotesize", sep="2pt")
+
+
+def supp_seeds() -> None:
+    p = REPORTS / "comomentum_sampling_regressions.csv"
+    pj = REPORTS / "comomentum_sampling_summary.json"
+    if not p.exists() or not pj.exists():
+        log.warning("缺 sampling CSV/JSON，跳过 supp_seeds")
+        return
+    d = pd.read_csv(p)
+    d = d[(d["measure"] == "comomentum") & (d["horizon"] == 6)].sort_values("seed")
+    out = [r"\begin{tabular}{lcccc}", r"\toprule",
+           r"Seed & $\beta$ & HAC $t$ & Perm. $p$ & $N$ \\", r"\midrule",
+           r"\multicolumn{5}{l}{\textit{Panel A: summary across 20 predeclared seeds}} \\",
+           r"\midrule"]
+    for lab, fn in (("Minimum", "min"), ("Median", "median"), ("Maximum", "max")):
+        b = getattr(d["beta"], fn)()
+        pv = getattr(d["p_placebo"], fn)()
+        out.append(f"{lab} & {b:.4f} & & {pfmt(pv)} & \\\\")
+    out += [r"\midrule",
+            r"\multicolumn{5}{l}{\textit{Panel B: full seed-by-seed column}} \\",
+            r"\midrule"]
+    for _, r in d.iterrows():
+        out.append(f"{int(r['seed'])} & {r['beta']:.4f}{stars(r['p_placebo'])} & "
+                   f"{r['t']:.2f} & {pfmt(r['p_placebo'])} & {int(r['n'])} \\\\")
+    out += [r"\bottomrule", r"\end{tabular}"]
+    notes = ("Sample: six factors, 2016--2025, with the comomentum measure recomputed under 20 "
+             "predeclared sampling seeds. Sampling is without replacement with at most 100 stocks "
+             "per factor-leg-month; specification D is estimated separately within each seed, and "
+             "inference uses grouped within-factor circular shifts with the same HAC lags. Seed "
+             "replicates are never pooled to increase regression $N$ and are never selected by "
+             "significance. $h=6$; the permutation draw count is 101, so the smallest attainable "
+             "$p$-value is about 0.0099. The production regression is reproduced exactly by the "
+             "first seed. Stars use permutation $p$-values: * $p<0.10$, ** $p<0.05$, "
+             "*** $p<0.01$.")
+    write_tpt("supp_seeds.tex", out, notes, size=r"\small")
+
+
+def supplement_tables() -> None:
+    """Build the Online Supplement tables S1--S10 without touching main-text tables."""
+    supp_corr()
+    supp_main_inference()
+    supp_orth()
+    supp_flow_horse()
+    supp_dist()
+    supp_volatility()
+    supp_formation()
+    supp_weekly()
+    supp_secondmoment()
+    supp_seeds()
+
+
 def main() -> None:
     log.info(f"生成论文图表 | 北京时间 {now_local():%Y-%m-%d %H:%M:%S}")
     # 2026-10-25 复审版：正文只用下列 7 张表；Figure 1 由 31_revision_analyses.py 直接
     # 输出矢量 PDF，此处不再把旧 PNG 转成 PDF 覆盖它。
-    table_main(); table6(); table_mechanism(); table_slopes(); table8(); table_robust()
+    table_main(); table_family(); table6(); table_mechanism(); table_slopes(); table8(); table_robust()
+    supplement_tables()
     heartbeat("12 图表生成结束", log)
 
 

@@ -24,7 +24,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (CLEAN, REPORTS, get_logger, hac_ols, heartbeat, now_local,  # noqa: E402
-                    placebo_pvalue, read_parquet)
+                    placebo_pvalue, read_parquet, time_index)
 
 log = get_logger("15_vol", "15_volatility.log")
 FACTORS = ["VAL", "SMB", "MOM", "QMJ", "LOWVOL", "TURN"]
@@ -68,7 +68,9 @@ def main() -> None:
                 d[measure + "_z"] = (d[measure] - d[measure].mean()) / d[measure].std()
                 cols = [measure + "_z"] + list(fe.columns)
                 try:
-                    res = hac_ols(d[target].to_numpy(), d[cols].to_numpy(), cols)
+                    # A 类：因子 × 月堆叠面板 → Driscoll–Kraay。
+                    res = hac_ols(d[target].to_numpy(), d[cols].to_numpy(), cols,
+                                  time=time_index(d["ym"]))
                 except Exception as e:  # noqa: BLE001
                     log.warning(f"回归失败 {measure} h={h} {target}: {e}")
                     continue

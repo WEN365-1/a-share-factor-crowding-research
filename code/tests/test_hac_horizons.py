@@ -47,7 +47,7 @@ class HacHorizonTests(unittest.TestCase):
     def check_fit_row(self, module, horizon, expected_lags):
         hac_calls, placebo_calls = [], []
 
-        def fake_hac(y, x, cols, lags=6):
+        def fake_hac(y, x, cols, lags=6, time=None):
             hac_calls.append(lags)
             return fake_result(cols)
 
@@ -76,7 +76,7 @@ class HacHorizonTests(unittest.TestCase):
         for horizon, expected in ((6, 6), (12, 12)):
             hac_calls, placebo_calls = [], []
 
-            def fake_hac(y, x, cols, lags=6):
+            def fake_hac(y, x, cols, lags=6, time=None):
                 hac_calls.append(lags)
                 return fake_result(cols)
 
@@ -98,7 +98,7 @@ class HacHorizonTests(unittest.TestCase):
         for horizon, expected in ((6, 6), (12, 12)):
             hac_calls, placebo_calls = [], []
 
-            def fake_hac(y, x, cols, lags=6):
+            def fake_hac(y, x, cols, lags=6, time=None):
                 hac_calls.append(lags)
                 return fake_result(cols)
 
@@ -120,7 +120,7 @@ class HacHorizonTests(unittest.TestCase):
         frame["inter"] = frame["x"] * frame["high_comom"]
         calls = []
 
-        def fake_hac(y, x, cols, lags=6):
+        def fake_hac(y, x, cols, lags=6, time=None):
             calls.append(lags)
             return {"inter": {"t": 0.5}}
 
@@ -140,7 +140,7 @@ class HacHorizonTests(unittest.TestCase):
         })
         shapes = []
 
-        def fake_hac(y, x, cols, lags=6):
+        def fake_hac(y, x, cols, lags=6, time=None):
             shapes.append((x.shape, list(cols)))
             return fake_result(cols)
 

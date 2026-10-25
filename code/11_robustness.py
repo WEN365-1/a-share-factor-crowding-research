@@ -17,7 +17,8 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (CLEAN, REPORTS, formation_universe, get_logger, hac_ols,  # noqa: E402
-                    heartbeat, now_local, placebo_pvalue, read_parquet, regression_frame)
+                    heartbeat, now_local, placebo_pvalue, read_parquet, regression_frame,
+                    time_index)
 
 log = get_logger("11_robust", "11_robustness.log")
 FACTORS = ["VAL", "SMB", "MOM", "QMJ", "LOWVOL", "TURN"]
@@ -40,7 +41,7 @@ def fit(d: pd.DataFrame, measure: str, y: str = "fwd1"):
     fe = pd.get_dummies(base["factor"], prefix="FE", drop_first=True).astype(float)
     dd = regression_frame(pd.concat([base, fe], axis=1))
     cols = [measure] + list(fe.columns)
-    r = hac_ols(dd[y].to_numpy(), dd[cols].to_numpy(), cols)
+    r = hac_ols(dd[y].to_numpy(), dd[cols].to_numpy(), cols, time=time_index(dd["ym"]))
     pp, _ = placebo_pvalue(dd, cols, measure, y, r[measure]["t"])
     return r[measure]["coef"], r[measure]["t"], r[measure]["p"], pp, r["_n"]
 

@@ -309,8 +309,51 @@ def regression_frame(frame: pd.DataFrame, z_by: str = "factor") -> pd.DataFrame:
     return frame.sort_values(["ym", z_by]).copy()
 
 
-def hac_ols(y, X, names: list[str], lags: int = 6):
-    """普通最小二乘 + Newey–West(HAC) 标准误。返回 {变量名: {coef, se, t, p}}。
+def time_index(values) -> np.ndarray:
+    """把 ym（Period 序列 / PeriodIndex）转成整数月序号，供 Driscoll–Kraay 的 time 参数。"""
+    return np.asarray(pd.PeriodIndex(values, freq="M").asi8, dtype=np.int64)
+
+
+def driscoll_kraay_cov(X, resid, time, lags: int) -> np.ndarray:
+    """Driscoll–Kraay 协方差（Bartlett 核）。
+
+    面板是「因子 × 月」堆叠时，普通 Newey–West 的滞后按**行**算，6 行只覆盖约
+    一个月，还会把同月不同因子之间的协方差混进来。DK 的做法是先把每个月内所有
+    观测的得分 x_it·e_it 加总成月度向量 S_t，再对 S_t 做滞后 L 个**月**的 NW。
+    缺失月份不补零，按实际出现的月份顺序排列。
+
+    参数里的 X 必须已含常数项且与 resid 行数一致。
+    """
+    X = np.asarray(X, dtype=float)
+    t = np.asarray(time).ravel()
+    if t.shape[0] != X.shape[0]:
+        raise ValueError(f"time 长度 {t.shape[0]} 与回归样本 {X.shape[0]} 不一致")
+    u = X * np.asarray(resid, dtype=float)[:, None]
+    order = np.argsort(t, kind="stable")
+    t_sorted = t[order]
+    u_sorted = u[order]
+    _, starts = np.unique(t_sorted, return_index=True)
+    S = np.add.reduceat(u_sorted, starts, axis=0)      # (T, k)：每月得分之和
+    omega = S.T @ S
+    for lag in range(1, int(lags) + 1):
+        if lag >= S.shape[0]:
+            break
+        w = 1.0 - lag / (lags + 1.0)
+        G = S[lag:].T @ S[:-lag]
+        omega += w * (G + G.T)
+    # 用伪逆而不是 inv：剔除某个因子后的样本只剩 5 个因子，5 个固定效应虚拟变量
+    # 加常数项恰好共线，X'X 奇异。statsmodels 的 HAC 本来就用 pinv，这里保持一致，
+    # 否则会在「leave one factor out」这类样本上把可识别的测度系数变成 NaN。
+    A = np.linalg.pinv(X.T @ X)
+    return A @ omega @ A
+
+
+def hac_ols(y, X, names: list[str], lags: int = 6, time=None):
+    """普通最小二乘 + HAC 标准误。返回 {变量名: {coef, se, t, p}}。
+
+    ``time=None``：对单序列做普通 Newey–West（与旧行为完全一致）。
+    ``time`` 给定：对堆叠面板做 Driscoll–Kraay，``time`` 是每行的整数月序号；
+    滞后 ``lags`` 因此按**月**而不是按行计算。
 
     会先丢掉**零方差列**：当某个因子在当期样本里整体缺失（例如 MOM 需要 12 个月
     完整历史、样本前段为空），它的固定效应虚拟变量会退化成全零列，与常数项完全共线。
@@ -318,6 +361,7 @@ def hac_ols(y, X, names: list[str], lags: int = 6):
     不丢列的话回归结果会静默地变成垃圾。
     """
     import statsmodels.api as sm
+    from scipy.stats import norm
     X = np.asarray(X, dtype=float)
     names = list(names)
     dropped: list[str] = []
@@ -329,9 +373,20 @@ def hac_ols(y, X, names: list[str], lags: int = 6):
             X = X[:, keep]
             names = [n for n, k in zip(names, keep) if k]
     Xc = sm.add_constant(X, has_constant="add")
-    res = sm.OLS(y, Xc).fit(cov_type="HAC", cov_kwds={"maxlags": lags})
+    if time is None:
+        res = sm.OLS(y, Xc).fit(cov_type="HAC", cov_kwds={"maxlags": lags})
+        params, bse, tvals, pvals = res.params, res.bse, res.tvalues, res.pvalues
+    else:
+        res = sm.OLS(y, Xc).fit()
+        params = res.params
+        var = np.diag(driscoll_kraay_cov(Xc, res.resid, time, lags))
+        # 数值上可能出现极小的负方差（对称化误差），截到 0 再开方。
+        bse = np.sqrt(np.clip(var, 0.0, None))
+        with np.errstate(divide="ignore", invalid="ignore"):
+            tvals = np.asarray(params) / bse
+        pvals = 2.0 * norm.sf(np.abs(tvals))
     out = {}
-    for n, b, se, t, p in zip(["const"] + names, res.params, res.bse, res.tvalues, res.pvalues):
+    for n, b, se, t, p in zip(["const"] + names, params, bse, tvals, pvals):
         out[n] = {"coef": float(b), "se": float(se), "t": float(t), "p": float(p)}
     out["_n"] = int(res.nobs)
     out["_r2"] = float(res.rsquared)
@@ -355,12 +410,15 @@ def _grouped_circular_shift(frame: pd.DataFrame, measure: str, z_by: str,
 
 
 def placebo_null_dist(d, cols: list[str], measure: str, y: str,
-                      z_by: str = "factor", hac_lags: int = 6):
+                      z_by: str = "factor", hac_lags: int = 6, use_time: bool = True):
     """与观测回归完全相同 estimator 的 pooled |t| 零分布。
 
     每个 circular shift 都复制完整面板、在各分组内平移测度，并调用同一个
     ``hac_ols``。因此固定效应、控制变量、有效样本和 HAC 计算方式与观测
     statistic 一致；不会再把 factor-specific t 值混合成 pooled null。
+
+    ``use_time=True`` 时按 Driscoll–Kraay 计算（堆叠面板）；单因子时间序列
+    （每个 ym 只有一行）的调用者应传 ``use_time=False``，退回普通 Newey–West。
     """
     frame = d.sort_values(["ym", z_by]).copy()
     groups = [g for _, g in frame.groupby(z_by, observed=True, sort=False)]
@@ -368,11 +426,13 @@ def placebo_null_dist(d, cols: list[str], measure: str, y: str,
         return np.asarray([], dtype=float)
     # 只使用所有分组都支持的位移，避免较短分组被 modulo 重复使用同一位移。
     n_shifts = min(len(g) for g in groups) - 1
+    # 平移不改变行顺序或月份，月序号在循环外算一次即可。
+    tvals = time_index(frame["ym"]) if use_time else None
     ts = []
     for k in range(1, n_shifts + 1):
         perm = _grouped_circular_shift(frame, measure, z_by, k)
         r = hac_ols(perm[y].to_numpy(dtype=float), perm[cols].to_numpy(dtype=float), cols,
-                    lags=hac_lags)
+                    lags=hac_lags, time=tvals)
         t = r.get(measure, {}).get("t", np.nan)
         if np.isfinite(t):
             ts.append(abs(float(t)))
@@ -380,9 +440,10 @@ def placebo_null_dist(d, cols: list[str], measure: str, y: str,
 
 
 def placebo_pvalue(d, cols: list[str], measure: str, y: str,
-                   obs_t: float, z_by: str = "factor", hac_lags: int = 6) -> tuple[float, int]:
+                   obs_t: float, z_by: str = "factor", hac_lags: int = 6,
+                   use_time: bool = True) -> tuple[float, int]:
     """计算有限循环置换 p 值，并使用加一修正。"""
-    a = placebo_null_dist(d, cols, measure, y, z_by, hac_lags=hac_lags)
+    a = placebo_null_dist(d, cols, measure, y, z_by, hac_lags=hac_lags, use_time=use_time)
     if not a.size or not np.isfinite(obs_t):
         return float("nan"), int(a.size)
     return float((1.0 + np.sum(a >= abs(obs_t))) / (1.0 + a.size)), int(a.size)

@@ -1,5 +1,5 @@
 """
-16_extension_analyses.py —— 投稿前补强分析（对应 frl_submission_review_2026-10-18 的 H4/H11/H12/M7 + 拓展）
+16_extension_analyses.py —— 投稿前补强分析（对应审稿前补强清单的 H4/H11/H12/M7 + 拓展）
 
 产出（全部写入 reports/，英文标签，供 12/18 生成 LaTeX 表）：
   table6_compound.csv      H4：复利收益 vs 求和收益（spec D，两测度 × h∈{1,3,6,12}）
@@ -23,7 +23,7 @@ import statsmodels.api as sm
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (CLEAN, REPORTS, get_logger, hac_ols, heartbeat,  # noqa: E402
-                    placebo_pvalue, placebo_null_dist, read_parquet)
+                    placebo_pvalue, placebo_null_dist, read_parquet, time_index)
 
 log = get_logger("16_ext", "16_extension_analyses.log")
 FACTORS = ["VAL", "SMB", "MOM", "QMJ", "LOWVOL", "TURN"]
@@ -92,7 +92,9 @@ def fit_row(d: pd.DataFrame, cols: list[str], measure: str, y: str,
     if len(d) < 40:
         return None
     lags = 12 if meta.get("horizon") == 12 else 6
-    r = hac_ols(d[y].to_numpy(), d[cols].to_numpy(), cols, lags=lags)
+    # A 类：因子 × 月堆叠面板 → Driscoll–Kraay（滞后按月度而非行）。
+    r = hac_ols(d[y].to_numpy(), d[cols].to_numpy(), cols, lags=lags,
+                time=time_index(d["ym"]))
     pp, nd = placebo_pvalue(d, cols, measure, y, r[measure]["t"], hac_lags=lags)
     row = {"measure": measure.replace("_z", ""), "horizon": None, "hac_lags": lags,
            "beta": r[measure]["coef"], "se": r[measure]["se"], "t": r[measure]["t"],
@@ -225,12 +227,13 @@ def placebo_null_interaction(d: pd.DataFrame, cols: list[str], base: str,
     if not groups or any(len(g) < 30 for g in groups):
         return np.asarray([], dtype=float)
     n_shifts = min(len(g) for g in groups) - 1
+    tvals = time_index(frame["ym"])   # A 类堆叠面板 → DK
     ts = []
     for k in range(1, n_shifts + 1):
         perm = _grouped_circular_shift(frame, base, "factor", k)
         perm[inter] = perm[base] * perm["high_comom"]
         r = hac_ols(perm[y].to_numpy(dtype=float), perm[cols].to_numpy(dtype=float), cols,
-                    lags=hac_lags)
+                    lags=hac_lags, time=tvals)
         t = r.get(inter, {}).get("t", np.nan)
         if np.isfinite(t):
             ts.append(abs(float(t)))
@@ -259,7 +262,8 @@ def agreement_split(df: pd.DataFrame) -> pd.DataFrame:
         d = d.dropna(subset=cols + [f"fwd{h}"]).copy()
         if len(d) < 40:
             continue
-        r = hac_ols(d[f"fwd{h}"].to_numpy(), d[cols].to_numpy(), cols, lags=lags)
+        r = hac_ols(d[f"fwd{h}"].to_numpy(), d[cols].to_numpy(), cols, lags=lags,
+                    time=time_index(d["ym"]))
         null = placebo_null_interaction(d, cols, "crowd_margin_z", "inter_mh", f"fwd{h}",
                                         hac_lags=lags)
         pp = (float((1.0 + np.sum(null >= abs(r["inter_mh"]["t"]))) / (1.0 + null.size))
@@ -309,7 +313,7 @@ def main() -> None:
     for base in ["crowd_margin", "comomentum"]:
         d = df.dropna(subset=[base + "_z"] + ctrl + ["fwd6"])
         r = hac_ols(d["fwd6"].to_numpy(), d[[base + "_z"] + ctrl].to_numpy(),
-                    [base + "_z"] + ctrl)
+                    [base + "_z"] + ctrl, time=time_index(d["ym"]))
         sd_w = float((d[base] - d.groupby("factor", observed=True)[base]
                       .transform("mean")).std())
         log.info(f"{base}: h=6 D β_z={r[base+'_z']['coef']:+.4f} "

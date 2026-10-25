@@ -21,7 +21,7 @@ from statsmodels.stats.multitest import multipletests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (CLEAN, REPORTS, get_logger, hac_ols, now_local,  # noqa: E402
-                    placebo_pvalue, read_parquet, regression_frame)
+                    placebo_pvalue, read_parquet, regression_frame, time_index)
 
 log = get_logger("23_lp_second_moments", "23_lp_second_moments.log")
 MEASURES = ["comomentum", "comomentum_lp", "comomentum_lp_screen", "crowd_margin"]
@@ -129,8 +129,11 @@ def margin_returns(df: pd.DataFrame, controls: list[str]) -> pd.DataFrame:
         z, y = "crowd_margin_z", "fwd12_comp"
         d = regression_frame(frame.dropna(subset=[z, y] + controls))
         cols = [z] + controls
-        r = hac_ols(d[y].to_numpy(), d[cols].to_numpy(), cols, lags=12)
-        pp, nd = placebo_pvalue(d, cols, z, y, r[z]["t"], hac_lags=12)
+        # pooled 是因子 × 月堆叠面板（DK）；逐因子样本每个 ym 只有一行（NW）。
+        use_time = factor == "pooled"
+        tvals = time_index(d["ym"]) if use_time else None
+        r = hac_ols(d[y].to_numpy(), d[cols].to_numpy(), cols, lags=12, time=tvals)
+        pp, nd = placebo_pvalue(d, cols, z, y, r[z]["t"], hac_lags=12, use_time=use_time)
         rows.append({"sample": factor, "measure": "crowd_margin", "horizon": 12,
                      "return_type": "compound", "hac_lags": 12, "beta": r[z]["coef"],
                      "se": r[z]["se"], "t": r[z]["t"], "p_hac": r[z]["p"],
@@ -146,7 +149,7 @@ def margin_returns(df: pd.DataFrame, controls: list[str]) -> pd.DataFrame:
 
 
 def moment_regressions(df: pd.DataFrame, controls: list[str], outcomes: pd.DataFrame,
-                       sample: str = "pooled") -> pd.DataFrame:
+                       sample: str = "pooled", use_time: bool = True) -> pd.DataFrame:
     rows = []
     for h in [1, 3, 6, 12]:
         targets = ["daily_vol", "daily_skew", "daily_bad_share"]
@@ -161,8 +164,11 @@ def moment_regressions(df: pd.DataFrame, controls: list[str], outcomes: pd.DataF
             for measure in MEASURES:
                 z = measure + "_z"
                 cols = [z] + controls
-                r = hac_ols(base[target].to_numpy(), base[cols].to_numpy(), cols, lags=12)
-                pp, nd = placebo_pvalue(base, cols, z, target, r[z]["t"], hac_lags=12)
+                tvals = time_index(base["ym"]) if use_time else None
+                r = hac_ols(base[target].to_numpy(), base[cols].to_numpy(), cols, lags=12,
+                            time=tvals)
+                pp, nd = placebo_pvalue(base, cols, z, target, r[z]["t"], hac_lags=12,
+                                        use_time=use_time)
                 rows.append({"sample": sample, "measure": measure, "horizon": h, "target": target,
                              "hac_lags": 12, "beta": r[z]["coef"], "se": r[z]["se"],
                              "t": r[z]["t"], "p_hac": r[z]["p"], "p_placebo": pp,
@@ -185,7 +191,8 @@ def main() -> None:
     log.info("实现矩与崩溃频率结果\n%s",
              moments[["measure", "horizon", "target", "beta", "t", "p_placebo", "p_bh", "n"]]
              .round(5).to_string(index=False))
-    mom = moment_regressions(df[df["factor"] == "MOM"].copy(), controls, outcomes, sample="MOM")
+    mom = moment_regressions(df[df["factor"] == "MOM"].copy(), controls, outcomes, sample="MOM",
+                             use_time=False)
     log.info("MOM 单独实现矩与崩溃频率结果\n%s",
              mom[["measure", "horizon", "target", "beta", "t", "p_placebo", "p_bh", "n"]]
              .round(5).to_string(index=False))

@@ -20,7 +20,8 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import REPORTS, get_logger, hac_ols, placebo_pvalue, regression_frame  # noqa: E402
+from common import (REPORTS, get_logger, hac_ols, placebo_pvalue,  # noqa: E402
+                    regression_frame, time_index)
 
 log = get_logger("27_formation_robustness", "27_formation_robustness.log")
 HORIZONS = [1, 3, 6, 12]
@@ -94,7 +95,8 @@ def estimate(frame: pd.DataFrame, controls: list[str], measure: str,
     if len(d) < 40:
         raise ValueError(f"Effective sample too small: {variant} {measure} h={horizon}")
     lags = 12 if horizon == 12 else 6
-    result = hac_ols(d[y].to_numpy(), d[cols].to_numpy(), cols, lags=lags)
+    result = hac_ols(d[y].to_numpy(), d[cols].to_numpy(), cols, lags=lags,
+                     time=time_index(d["ym"]))
     pp, ndraw = placebo_pvalue(
         d, cols, measure, y, result[measure]["t"], hac_lags=lags)
     return {

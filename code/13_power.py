@@ -33,7 +33,7 @@ from scipy.stats import norm
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (REPORTS, get_logger, hac_ols, heartbeat, now_local,  # noqa: E402
-                    placebo_null_dist)
+                    placebo_null_dist, time_index)
 
 log = get_logger("13_power", "13_power.log")
 
@@ -78,7 +78,7 @@ def cell_power(df: pd.DataFrame, measure: str, h: int, cols: list[str],
     # 每个月的行区间（已按 ym 排序）
     bounds = np.searchsorted(ym_idx, np.arange(len(months) + 1))
 
-    # 安慰剂临界值：零分布的 95 分位。用真实数据算一次。
+    # 安慰剂临界值：零分布的 95 分位。用真实数据算一次（面板 → DK）。
     null = placebo_null_dist(d, cols + [measure], measure, y)
     if null.size < 20:
         return None
@@ -86,7 +86,8 @@ def cell_power(df: pd.DataFrame, measure: str, h: int, cols: list[str],
 
     # 全变量回归的标准误，用来定 β 网格的范围
     full_cols = [measure] + cols
-    r0 = hac_ols(d[y].to_numpy(dtype=float), d[full_cols].to_numpy(dtype=float), full_cols)
+    r0 = hac_ols(d[y].to_numpy(dtype=float), d[full_cols].to_numpy(dtype=float), full_cols,
+                 time=time_index(d["ym"]))
     se = r0[measure]["se"]
     if not np.isfinite(se) or se <= 0:
         return None
@@ -116,7 +117,8 @@ def cell_power(df: pd.DataFrame, measure: str, h: int, cols: list[str],
         # 重抽月份时，被解释变量与控制变量必须用同一套下标重抽——
         # 重抽是有放回的，行数不再等于原样本。
         pick = np.concatenate([np.arange(bounds[j], bounds[j + 1]) for j in idx_months])
-        rr = hac_ols(fitted[pick] + u[pick], Xs[pick], full_cols)
+        # 自助样本仍按原月份分组（同月可能被抽中多次）→ 与观测口径一致的 DK。
+        rr = hac_ols(fitted[pick] + u[pick], Xs[pick], full_cols, time=ym_idx[pick])
         if measure in rr:
             b_hats.append(rr[measure]["coef"])
     if len(b_hats) < 30:

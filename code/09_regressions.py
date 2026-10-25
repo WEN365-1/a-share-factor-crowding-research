@@ -33,7 +33,7 @@ import statsmodels.api as sm
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (CLEAN, CFG, REPORTS, get_logger, hac_ols, heartbeat, now_local,  # noqa: E402
-                    placebo_pvalue, read_parquet)
+                    placebo_pvalue, read_parquet, time_index)
 
 log = get_logger("09_regressions", "09_regressions.log")
 FACTORS = ["VAL", "SMB", "MOM", "QMJ", "LOWVOL", "TURN"]
@@ -103,12 +103,17 @@ def controls_for(df: pd.DataFrame, spec: str) -> list[str]:
 
 
 def infer_horizon(d: pd.DataFrame, cols: list[str], measure: str, y: str,
-                  horizon: int):
-    """短规格 HAC(6)，12 个月辅助规格 HAC(12)；置换使用完全相同的滞后阶数。"""
+                  horizon: int, use_time: bool = True):
+    """短规格 HAC(6)，12 个月辅助规格 HAC(12)；置换使用完全相同的滞后阶数。
+
+    ``d`` 是「因子 × 月」堆叠面板（每个 ym 多行）→ Driscoll–Kraay（``time``）。
+    ``use_time=False`` 留给每个 ym 只有一行的单因子时间序列。
+    """
     lags = 12 if horizon == 12 else 6
-    r = hac_ols(d[y].to_numpy(), d[cols].to_numpy(), cols, lags=lags)
+    tvals = time_index(d["ym"]) if use_time else None
+    r = hac_ols(d[y].to_numpy(), d[cols].to_numpy(), cols, lags=lags, time=tvals)
     pp, ndraw = placebo_pvalue(d, cols, measure, y, r[measure]["t"],
-                               z_by="factor", hac_lags=lags)
+                               z_by="factor", hac_lags=lags, use_time=use_time)
     return r, pp, ndraw, lags
 
 
@@ -222,8 +227,10 @@ def main() -> None:
             # 所以必须真的把过去 1/6/12 月收益放进去。原来的写法只放了测度本身、
             # 注释却写「控制自身过去收益」，名实不符。
             cols2 = [measure] + ctrl2
+            # B 类：逐因子切片后每个 ym 只有一行 → 普通 Newey–West。
             r = hac_ols(g["fwd1"].to_numpy(), g[cols2].to_numpy(), cols2)
-            pp2, _ = placebo_pvalue(g, cols2, measure, "fwd1", r[measure]["t"])
+            pp2, _ = placebo_pvalue(g, cols2, measure, "fwd1", r[measure]["t"],
+                                    use_time=False)
             slopes.append((f, r[measure]))
             rows3.append({"measure": measure.replace("_z", ""), "layer": "②因子内时序回归",
                           "horizon": 1, "beta": r[measure]["coef"], "t": r[measure]["t"],

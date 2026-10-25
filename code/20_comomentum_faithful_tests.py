@@ -19,7 +19,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (CLEAN, REPORTS, get_logger, hac_ols, now_local,  # noqa: E402
-                    placebo_pvalue, read_parquet, regression_frame)
+                    placebo_pvalue, read_parquet, regression_frame, time_index)
 
 log = get_logger("20_comomentum_faithful_tests", "20_comomentum_faithful_tests.log")
 MEASURES = ["comomentum", "comomentum_lp", "comomentum_lp_screen"]
@@ -48,7 +48,8 @@ def build_panel():
 
 
 def estimate(df: pd.DataFrame, controls: list[str], measure: str, horizon: int,
-             sample: str, common_measures: list[str] | None = None) -> dict:
+             sample: str, common_measures: list[str] | None = None,
+             use_time: bool = True) -> dict:
     z = measure + "_z"
     required = [z] + controls + [f"fwd{horizon}"]
     if common_measures:
@@ -58,8 +59,12 @@ def estimate(df: pd.DataFrame, controls: list[str], measure: str, horizon: int,
         raise ValueError(f"有效样本过小：{sample} {measure} h={horizon}, N={len(d)}")
     cols = [z] + controls
     lags = 12 if horizon == 12 else 6
-    r = hac_ols(d[f"fwd{horizon}"].to_numpy(), d[cols].to_numpy(), cols, lags=lags)
-    pp, ndraw = placebo_pvalue(d, cols, z, f"fwd{horizon}", r[z]["t"], hac_lags=lags)
+    # pooled 样本是因子 × 月堆叠面板（A 类）；MOM_only 每个 ym 只有一行（B 类）。
+    tvals = time_index(d["ym"]) if use_time else None
+    r = hac_ols(d[f"fwd{horizon}"].to_numpy(), d[cols].to_numpy(), cols, lags=lags,
+                time=tvals)
+    pp, ndraw = placebo_pvalue(d, cols, z, f"fwd{horizon}", r[z]["t"], hac_lags=lags,
+                               use_time=use_time)
     return {"sample": sample, "measure": measure, "horizon": horizon, "hac_lags": lags,
             "beta": r[z]["coef"], "se": r[z]["se"], "t": r[z]["t"],
             "p_hac": r[z]["p"], "p_placebo": pp, "n_placebo": ndraw,
@@ -77,7 +82,7 @@ def main() -> None:
             rows.append(estimate(df, controls, measure, h, "pooled_common", MEASURES))
         mom = df[df["factor"] == "MOM"].copy()
         for measure in MEASURES:
-            rows.append(estimate(mom, controls, measure, h, "MOM_only"))
+            rows.append(estimate(mom, controls, measure, h, "MOM_only", use_time=False))
     out = pd.DataFrame(rows)
     out.to_csv(REPORTS / "comomentum_faithful_regressions.csv", index=False, encoding="utf-8-sig")
     log.info("LP 对照回归结果\n%s",

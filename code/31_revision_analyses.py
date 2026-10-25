@@ -17,6 +17,7 @@
   reports/rev_factor_slopes.csv
   reports/rev_permutation_sensitivity.csv
   reports/rev_stock_mechanism.csv
+  reports/rev_family_maxT.csv      主检验族（2 测度 × h∈{1,3,6}）的 max-|t| 联合置换校正
 """
 from __future__ import annotations
 
@@ -29,8 +30,9 @@ import pandas as pd
 
 CODE = Path(__file__).resolve().parent
 sys.path.insert(0, str(CODE))
-from common import (CLEAN, REPORTS, _grouped_circular_shift, formation_universe,  # noqa: E402
-                    get_logger, hac_ols, now_local, read_parquet)
+from common import (CLEAN, REPORTS, _grouped_circular_shift, driscoll_kraay_cov,  # noqa: E402
+                    formation_universe, get_logger, hac_ols, now_local, read_parquet,
+                    time_index)
 
 log = get_logger("31_revision", "31_revision_analyses.log")
 m08 = importlib.import_module("08_crowding")
@@ -142,7 +144,8 @@ def robustness_specD(df: pd.DataFrame, monthly: pd.DataFrame) -> pd.DataFrame:
 # ------------------------------------------------------------------
 # 2) 因子特定斜率
 # ------------------------------------------------------------------
-def _interaction_fit(d: pd.DataFrame, measure: str, ctrl: list[str], y: str, lags: int):
+def _interaction_fit(d: pd.DataFrame, measure: str, ctrl: list[str], y: str, lags: int,
+                     time=None):
     X = d[ctrl].copy()
     names = []
     for f in FACTORS:
@@ -152,9 +155,17 @@ def _interaction_fit(d: pd.DataFrame, measure: str, ctrl: list[str], y: str, lag
     cols = names + ctrl
     import statsmodels.api as sm
     Xc = sm.add_constant(X[cols].to_numpy(dtype=float), has_constant="add")
-    res = sm.OLS(d[y].to_numpy(dtype=float), Xc).fit(cov_type="HAC", cov_kwds={"maxlags": lags})
+    if time is None:
+        res = sm.OLS(d[y].to_numpy(dtype=float), Xc).fit(
+            cov_type="HAC", cov_kwds={"maxlags": lags})
+        cov = res.cov_params()
+    else:
+        # 同样是因子 × 月堆叠面板：交互项回归也必须用 DK，否则斜率与 Wald
+        # 的 t 值仍在按行计算滞后。
+        res = sm.OLS(d[y].to_numpy(dtype=float), Xc).fit()
+        cov = driscoll_kraay_cov(Xc, res.resid, time, lags)
     b = res.params[1:1 + len(FACTORS)]
-    V = res.cov_params()[1:1 + len(FACTORS), 1:1 + len(FACTORS)]
+    V = cov[1:1 + len(FACTORS), 1:1 + len(FACTORS)]
     t = b / np.sqrt(np.diag(V))
     R = np.hstack([np.ones((len(FACTORS) - 1, 1)), -np.eye(len(FACTORS) - 1)])
     rb = R @ b
@@ -171,12 +182,13 @@ def factor_slopes(df: pd.DataFrame) -> pd.DataFrame:
             y = f"fwd{h}"
             lags = 6
             d = df.dropna(subset=[meas] + ctrl + [y]).sort_values(["ym", "factor"]).copy()
-            b, t, wald = _interaction_fit(d, meas, ctrl, y, lags)
+            tvals = time_index(d["ym"])          # A 类堆叠面板 → DK
+            b, t, wald = _interaction_fit(d, meas, ctrl, y, lags, time=tvals)
             n_sh = d.groupby("factor").size().min() - 1
             null_t, null_w = [], []
             for k in range(1, n_sh + 1):
                 p = _grouped_circular_shift(d, meas, "factor", k)
-                bb, tt, ww = _interaction_fit(p, meas, ctrl, y, lags)
+                bb, tt, ww = _interaction_fit(p, meas, ctrl, y, lags, time=tvals)
                 null_t.append(np.abs(tt))
                 null_w.append(ww)
             null_t = np.array(null_t)
@@ -215,13 +227,14 @@ def permutation_sensitivity(df: pd.DataFrame, exclude: int = 12) -> pd.DataFrame
             y = f"fwd{h}"
             cols = [meas] + ctrl
             d = df.dropna(subset=cols + [y]).sort_values(["ym", "factor"]).copy()
-            r = hac_ols(d[y].to_numpy(), d[cols].to_numpy(), cols, lags=6)
+            tvals = time_index(d["ym"])          # A 类堆叠面板 → DK
+            r = hac_ols(d[y].to_numpy(), d[cols].to_numpy(), cols, lags=6, time=tvals)
             t_obs = abs(r[meas]["t"])
             n_min = d.groupby("factor").size().min()
             ts_all, ts_far = [], []
             for k in range(1, n_min):
                 p = _grouped_circular_shift(d, meas, "factor", k)
-                rr = hac_ols(p[y].to_numpy(), p[cols].to_numpy(), cols, lags=6)
+                rr = hac_ols(p[y].to_numpy(), p[cols].to_numpy(), cols, lags=6, time=tvals)
                 tk = abs(rr[meas]["t"])
                 ts_all.append(tk)
                 if min(k, n_min - k) > exclude:
@@ -239,6 +252,81 @@ def permutation_sensitivity(df: pd.DataFrame, exclude: int = 12) -> pd.DataFrame
     out = pd.DataFrame(rows)
     out.to_csv(REPORTS / "rev_permutation_sensitivity.csv", index=False, encoding="utf-8-sig")
     log.info("置换敏感性：\n" + out.round(4).to_string())
+    return out
+
+
+# ------------------------------------------------------------------
+# 3b) 主检验族的联合置换校正（max-|t|，Westfall–Young 逐步下降）
+# ------------------------------------------------------------------
+FAMILY_MEASURES = ["comomentum_z", "crowd_margin_z"]
+FAMILY_HORIZONS = [1, 3, 6]
+
+
+def family_maxT(df: pd.DataFrame) -> pd.DataFrame:
+    """六个主检验（2 测度 × h∈{1,3,6}）的 max-|t| 联合置换校正。
+
+    观测与置换统计量都用规格 D 控制变量、DK 标准误、L=6。置换时**两个测度
+    同时**按因子循环平移同一个 k，这样零分布保留了两测度之间的同期相关；
+    每个检验用各自 dropna 后的样本，平移在该样本内按因子进行。
+    """
+    ctrl = m16.controls_for(df, "D")
+    tests = []
+    for measure in FAMILY_MEASURES:
+        for h in FAMILY_HORIZONS:
+            y = f"fwd{h}"
+            cols = [measure] + ctrl
+            d = (df.dropna(subset=cols + [y])
+                  .sort_values(["ym", "factor"]).reset_index(drop=True))
+            if len(d) < 40:
+                raise ValueError(f"family 检验样本过小：{measure} h={h}, N={len(d)}")
+            tvals = time_index(d["ym"])
+            r = hac_ols(d[y].to_numpy(dtype=float), d[cols].to_numpy(dtype=float), cols,
+                        lags=6, time=tvals)
+            tests.append({"measure": measure, "horizon": h, "y": y, "d": d,
+                          "cols": cols, "t": float(r[measure]["t"])})
+    # 所有检验共用一个位移集合：取各检验「最短因子序列 − 1」的最小值。
+    K = min(int(t["d"].groupby("factor", observed=True).size().min()) - 1 for t in tests)
+    if K < 1:
+        raise ValueError("family 置换位移数不足")
+    log.info(f"family：{len(tests)} 个检验，共同位移 K={K}")
+
+    null = np.empty((K, len(tests)), dtype=float)
+    for k in range(1, K + 1):
+        for j, t in enumerate(tests):
+            perm = _grouped_circular_shift(t["d"], t["measure"], "factor", k)
+            tvals = time_index(perm["ym"])
+            rr = hac_ols(perm[t["y"]].to_numpy(dtype=float),
+                         perm[t["cols"]].to_numpy(dtype=float), t["cols"], lags=6, time=tvals)
+            null[k - 1, j] = abs(float(rr[t["measure"]]["t"]))
+
+    obs = np.abs(np.array([t["t"] for t in tests], dtype=float))
+    p_unadj = (1.0 + np.sum(null >= obs[None, :], axis=0)) / (1.0 + K)
+    max_stat = null.max(axis=1)
+    p_maxT_single = (1.0 + np.sum(max_stat[:, None] >= obs[None, :], axis=0)) / (1.0 + K)
+
+    # Westfall–Young 逐步下降：按 |t| 从大到小，每一步的 max 只在剩余检验里取；
+    # 最后对 p 做单调化，保证排在前面（更强）的检验不会得到更大的校正 p。
+    order = np.argsort(-obs, kind="stable")
+    p_step = np.empty(len(tests), dtype=float)
+    prev = 0.0
+    for rank, j in enumerate(order):
+        remaining = order[rank:]
+        m_r = null[:, remaining].max(axis=1)
+        pj = (1.0 + np.sum(m_r >= obs[j])) / (1.0 + K)
+        prev = max(prev, pj)
+        p_step[j] = prev
+
+    out = pd.DataFrame({
+        "measure": [t["measure"].replace("_z", "") for t in tests],
+        "horizon": [t["horizon"] for t in tests],
+        "t": [t["t"] for t in tests],
+        "p_unadj": p_unadj,
+        "p_maxT_single": p_maxT_single,
+        "p_maxT_stepdown": p_step,
+        "K": K,
+    })
+    out.to_csv(REPORTS / "rev_family_maxT.csv", index=False, encoding="utf-8-sig")
+    log.info("主检验族 max-|t| 校正：\n" + out.round(4).to_string(index=False))
     return out
 
 
@@ -366,7 +454,6 @@ def figure_series() -> None:
                                     ("crowd_margin", "#c0392b", "--", "Margin-balance proxy")]:
             z = (s[col] - s[col].mean()) / s[col].std()
             ax.plot(x, z.rolling(3, min_periods=3).mean(), color=color, ls=ls, lw=1.0, label=lab)
-        ax.axvline(pd.Timestamp("2024-09-01"), color="grey", ls=":", lw=0.8)
         ax.axhline(0, color="black", lw=0.4)
         ax.set_title(FACTOR_NAMES[f], fontsize=8.5)
         ax.grid(alpha=0.25, lw=0.4)
@@ -384,7 +471,7 @@ def figure_series() -> None:
 
 def main() -> None:
     log.info(f"31 复审补充分析 | 北京时间 {now_local():%Y-%m-%d %H:%M:%S}")
-    which = set(sys.argv[1:]) or {"robust", "slopes", "perm", "mech", "fig"}
+    which = set(sys.argv[1:]) or {"robust", "slopes", "perm", "family", "mech", "fig"}
     if "fig" in which:
         figure_series()
         if which == {"fig"}:
@@ -394,6 +481,8 @@ def main() -> None:
     monthly["ym"] = pd.PeriodIndex(monthly["ym"], freq="M")
     if "perm" in which:
         permutation_sensitivity(df)
+    if "family" in which:
+        family_maxT(df)
     if "slopes" in which:
         factor_slopes(df)
     if "mech" in which:

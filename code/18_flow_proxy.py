@@ -29,7 +29,7 @@ import pyarrow.parquet as pq
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (CLEAN, MARGIN, REPORTS, formation_universe, get_logger, hac_ols,  # noqa: E402
-                    heartbeat, placebo_pvalue, read_parquet)
+                    heartbeat, placebo_pvalue, read_parquet, time_index)
 
 log = get_logger("18_flow", "18_flow_proxy.log")
 FACTORS = ["VAL", "SMB", "MOM", "QMJ", "LOWVOL", "TURN"]
@@ -70,7 +70,9 @@ def fit_row(d: pd.DataFrame, cols: list[str], measure: str, y: str,
     if len(d) < 40:
         return None
     lags = 12 if meta.get("horizon") == 12 else 6
-    r = hac_ols(d[y].to_numpy(), d[cols].to_numpy(), cols, lags=lags)
+    # A 类：因子 × 月堆叠面板 → Driscoll–Kraay（滞后按月度而非行）。
+    r = hac_ols(d[y].to_numpy(), d[cols].to_numpy(), cols, lags=lags,
+                time=time_index(d["ym"]))
     pp, _ = placebo_pvalue(d, cols, measure, y, r[measure]["t"], hac_lags=lags)
     row = {"measure": measure.replace("_z", ""), "hac_lags": lags, "beta": r[measure]["coef"],
            "se": r[measure]["se"], "t": r[measure]["t"], "p": r[measure]["p"],

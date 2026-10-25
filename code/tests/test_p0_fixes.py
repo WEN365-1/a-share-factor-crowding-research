@@ -119,7 +119,7 @@ class P0FixTests(unittest.TestCase):
             permuted_frames.append(perm)
             return perm
 
-        def fake_hac(y, X, names, lags=6):
+        def fake_hac(y, X, names, lags=6, time=None):
             observed_y.append(np.asarray(y))
             return {"m": {"t": 1.0}}
 

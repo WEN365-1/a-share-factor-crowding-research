@@ -21,7 +21,7 @@ import pandas as pd
 CODE = Path(__file__).resolve().parent
 sys.path.insert(0, str(CODE))
 from common import (CLEAN, REPORTS, formation_universe, get_logger, hac_ols,  # noqa: E402
-                    placebo_pvalue, read_parquet, write_parquet)
+                    placebo_pvalue, read_parquet, time_index, write_parquet)
 
 crowd_mod = importlib.import_module("08_crowding")
 regs = importlib.import_module("09_regressions")
@@ -137,7 +137,8 @@ def main() -> None:
             lags = 12 if horizon == 12 else 6
             cols = [measure] + ctrl
             d = df.dropna(subset=cols + [f"fwd{horizon}"]).copy()
-            r = hac_ols(d[f"fwd{horizon}"].to_numpy(), d[cols].to_numpy(), cols, lags=lags)
+            r = hac_ols(d[f"fwd{horizon}"].to_numpy(), d[cols].to_numpy(), cols, lags=lags,
+                        time=time_index(d["ym"]))
             pp, ndraw = placebo_pvalue(d, cols, measure, f"fwd{horizon}", r[measure]["t"],
                                        z_by="factor", hac_lags=lags)
             rows.append({"max_stale_days": threshold, "spec": "D", "horizon": horizon,
