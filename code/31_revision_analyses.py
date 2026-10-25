@@ -18,6 +18,7 @@
   reports/rev_permutation_sensitivity.csv
   reports/rev_stock_mechanism.csv
   reports/rev_family_maxT.csv      主检验族（2 测度 × h∈{1,3,6}）的 max-|t| 联合置换校正
+  reports/rev_joint.csv            两个测度同时进入规格 D 的联合回归（h∈{1,3,6}）
 """
 from __future__ import annotations
 
@@ -331,6 +332,45 @@ def family_maxT(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ------------------------------------------------------------------
+# 3c) 联合回归：两个测度同时进入规格 D
+# ------------------------------------------------------------------
+JOINT_HORIZONS = [1, 3, 6]
+
+
+def joint_regression(df: pd.DataFrame) -> pd.DataFrame:
+    """把 comomentum 与融资测度同时放进规格 D，判断二者是否携带不同信息。
+
+    两组系数各自用 ``m16.fit_row`` 做 DK 推断与置换 p 值；置换时只平移
+    被检验的测度，另一个测度保持原值，因此 cols 始终同时包含两个测度。
+    """
+    ctrl = m16.controls_for(df, "D")
+    alone = pd.read_csv(REPORTS / "table2_main.csv")
+    rows = []
+    for h in JOINT_HORIZONS:
+        y = f"fwd{h}"
+        cols = ["comomentum_z", "crowd_margin_z"] + ctrl
+        for meas in ["comomentum_z", "crowd_margin_z"]:
+            r = m16.fit_row(df, cols, meas, y, {"horizon": h})
+            if not r:
+                continue
+            row = {"measure": r["measure"], "horizon": h, "beta": r["beta"],
+                   "t": r["t"], "p_placebo": r["p_placebo"], "n": r["n"],
+                   "spec": "D joint"}
+            if h == 6:
+                hit = alone[(alone["measure"] == r["measure"])
+                            & (alone["spec"] == "D") & (alone["horizon"] == 6)]
+                row["beta_alone"] = float(hit["beta"].iloc[0]) if len(hit) else np.nan
+            else:
+                row["beta_alone"] = np.nan
+            rows.append(row)
+    out = pd.DataFrame(rows, columns=["measure", "horizon", "beta", "t", "p_placebo",
+                                      "n", "spec", "beta_alone"])
+    out.to_csv(REPORTS / "rev_joint.csv", index=False, encoding="utf-8-sig")
+    log.info("联合回归（规格 D，两测度同时进入）：\n" + out.round(4).to_string(index=False))
+    return out
+
+
+# ------------------------------------------------------------------
 # 4) 股票层面机制：腿内融资强度 → 下月收益
 # ------------------------------------------------------------------
 def monthly_max() -> pd.DataFrame:
@@ -465,13 +505,14 @@ def figure_series() -> None:
                bbox_to_anchor=(0.5, -0.01))
     fig.tight_layout(rect=(0, 0.05, 1, 1))
     out = CODE.parent / "paper" / "figures" / "fig_crowding_series.pdf"
+    out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out)
     log.info(f"写出 {out}")
 
 
 def main() -> None:
     log.info(f"31 复审补充分析 | 北京时间 {now_local():%Y-%m-%d %H:%M:%S}")
-    which = set(sys.argv[1:]) or {"robust", "slopes", "perm", "family", "mech", "fig"}
+    which = set(sys.argv[1:]) or {"robust", "slopes", "perm", "family", "mech", "joint", "fig"}
     if "fig" in which:
         figure_series()
         if which == {"fig"}:
@@ -483,6 +524,8 @@ def main() -> None:
         permutation_sensitivity(df)
     if "family" in which:
         family_maxT(df)
+    if "joint" in which:
+        joint_regression(df)
     if "slopes" in which:
         factor_slopes(df)
     if "mech" in which:

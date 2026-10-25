@@ -51,11 +51,12 @@ EN = {
     "long-short": "Long-short", "long": "Long leg", "short": "Short leg",
     "long->short": "Long measure $\\rightarrow$ short leg".replace("measure $\\rightarrow$", "$\\rightarrow$"),
     "short->long": "Short measure $\\rightarrow$ long leg".replace("measure $\\rightarrow$", "$\\rightarrow$"),
-    # 因子名
+    # 因子名（正文与表内统一显示 Quality，不改 CSV/代码中的因子代号）
+    "QMJ": "Quality",
     "POOLED": "Pooled", "POOLED(因子内去均值)": "Pooled (factor-demeaned)",
     # Table 3 的层名
     "①正交化后残差": "Layer 1: orthogonalised residual",
-    "③与全部控制同时放入": "Layer 3: all controls simultaneously",
+    "③与全部控制同时放入": "Layer 3: momentum and balance-level controls",
     "②因子内时序回归": "Layer 2: within-factor time series",
     "②六因子斜率汇总": "Layer 2: cross-factor mean slope",
     # Table 5 的检验与分组
@@ -912,7 +913,7 @@ def supp_orth() -> None:
                        f"{cell(r['beta'], r['p_placebo'])} & {r['t']:.2f} & "
                        f"{pfmt(r['p_placebo'])} & {int(r['n'])} \\\\")
     out += [r"\midrule",
-            r"\multicolumn{7}{l}{\textit{Panel B: Layer 3, all controls entered simultaneously}} \\"]
+            r"\multicolumn{7}{l}{\textit{Panel B: Layer 3, momentum and balance-level controls}} \\"]
     for meas in ["comomentum", "crowd_margin"]:
         for h in horizons:
             r = d[(d["measure"] == meas) & (d["layer"] == l3) & (d["horizon"] == h)].iloc[0]
@@ -928,7 +929,8 @@ def supp_orth() -> None:
             if hit.empty:
                 continue
             r = hit.iloc[0]
-            out.append(f"{en(meas) if f == SUPP_FACTORS[0] else ''} & Layer 2: {f} & 1 & "
+            out.append(f"{en(meas) if f == SUPP_FACTORS[0] else ''} & "
+                       f"Layer 2: {SUPP_FACTOR_LABEL.get(f, f)} & 1 & "
                        f"{cell(r['beta'], r['p_placebo'])} & {r['t']:.2f} & "
                        f"{pfmt(r['p_placebo'])} & {int(r['n'])} \\\\")
         sm = d[(d["measure"] == meas) & (d["layer"] == l2s)]
@@ -940,7 +942,9 @@ def supp_orth() -> None:
     nb = d["n"].dropna()
     notes = ("Sample: monthly factor returns for six factors, 2016--2025. Layer 1 replaces the "
              "crowding measure with its residual after projecting it on factor momentum and the "
-             "margin-balance level; Layer 3 enters all controls simultaneously; Layer 2 runs a "
+             "margin-balance level; Layer 3 enters momentum and balance-level controls "
+             "simultaneously. Neither layer includes the long- and short-leg coverage controls "
+             "of specification D. Layer 2 runs a "
              "separate within-factor time-series regression controlling for the factor's own past "
              "1-, 6-, and 12-month returns and the margin-balance level. Layer 2 factor-specific "
              "rows are available at $h=1$ only in the source output and have small samples; the "
@@ -1284,8 +1288,35 @@ def supp_seeds() -> None:
     write_tpt("supp_seeds.tex", out, notes, size=r"\small")
 
 
+def supp_joint() -> None:
+    """两测度同时进入规格 D 的联合回归（S13）。"""
+    p = REPORTS / "rev_joint.csv"
+    if not p.exists():
+        log.warning("缺 rev_joint.csv，跳过 supp_joint")
+        return
+    d = pd.read_csv(p)
+    out = [r"\begin{tabular}{llccccc}", r"\toprule",
+           r"Measure & $h$ & $\beta$ (joint) & HAC $t$ & Perm. $p$ & $N$ & "
+           r"$\beta$ alone, $h=6$ \\", r"\midrule"]
+    for k, meas in enumerate(["comomentum", "crowd_margin"]):
+        if k:
+            out.append(r"\midrule")
+        sub = d[d["measure"] == meas].sort_values("horizon")
+        for i, (_, r) in enumerate(sub.iterrows()):
+            alone = "—" if pd.isna(r.get("beta_alone")) else f"{r['beta_alone']:.4f}"
+            out.append(f"{en(meas) if i == 0 else ''} & {int(r['horizon'])} & "
+                       f"{cell(r['beta'], r['p_placebo'])} & {r['t']:.2f} & "
+                       f"{pfmt(r['p_placebo'])} & {int(r['n'])} & {alone} \\\\")
+    out += [r"\bottomrule", r"\end{tabular}"]
+    notes = ("Both measures enter the same specification-D regression; each permutation "
+             "$p$-value shifts only the measure being tested, holding the other measure and all "
+             "controls fixed. The final column reports the corresponding single-measure "
+             "specification-D coefficient at $h=6$ from the main table. " + STAR_NOTE)
+    write_tpt("supp_joint.tex", out, notes, size=r"\small", sep="5pt")
+
+
 def supplement_tables() -> None:
-    """Build the Online Supplement tables S1--S10 without touching main-text tables."""
+    """Build the Online Supplement tables S1--S13 without touching main-text tables."""
     supp_corr()
     supp_main_inference()
     supp_orth()
@@ -1296,6 +1327,7 @@ def supplement_tables() -> None:
     supp_weekly()
     supp_secondmoment()
     supp_seeds()
+    supp_joint()
 
 
 def main() -> None:
