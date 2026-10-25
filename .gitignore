@@ -1,0 +1,44 @@
+# Large upstream datasets and unrelated assets
+data/raw/
+data/clean/panel/
+iccai/
+archives/
+
+# Python and LaTeX build artifacts
+__pycache__/
+*.py[cod]
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.synctex.gz
+*.xdv
+*.pdf
+!paper/main.pdf
+!paper/figures/
+!paper/figures/*.pdf
+
+# Route B: no stand-alone provider-derived datasets without specific permission
+data/
+reports/*.csv
+reports/*.json
+
+# Runtime state and local controls
+STOP
+data/DONE
+data/.pipeline.lock
+data/CONTROL.json
+*.failed.json
+
+# Local/editor/secret files
+.env
+.env.*
+*.pem
+*.key
+id_rsa*
+.DS_Store
+.vscode/
+.idea/
