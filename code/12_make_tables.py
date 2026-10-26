@@ -590,7 +590,7 @@ def table_main() -> None:
 
 
 def table_family() -> None:
-    """主检验族（2 测度 × h∈{1,3,6}）的 max-|t| 联合置换校正表。"""
+    """主检验族（2 测度 × h∈{1,3,6}）的 max-|t| 联合置换校正表（日历对齐）。"""
     d = pd.read_csv(REPORTS / "rev_family_maxT.csv")
     out = [r"\begin{tabular}{llcccc}", r"\toprule",
            r"Measure & $h$ & $t$ & Unadj.\ $p$ & Single-step maxT $p$ & Stepdown $p$ \\",
@@ -606,13 +606,17 @@ def table_family() -> None:
     out += [r"\bottomrule", r"\end{tabular}"]
     K = int(d["K"].iloc[0])
     notes = ("The family contains the two measures at $h\\in\\{1,3,6\\}$, six tests in total. All "
-             "tests use specification D, Driscoll--Kraay standard errors with six monthly lags, "
-             "and the same within-factor circular-shift permutations. The unadjusted column is "
-             "the single-test permutation $p$-value; the single-step maxT column uses the "
-             "maximum $|t|$ across the six tests in each permutation; the stepdown column is the "
-             "Westfall--Young stepdown adjustment, which is monotone in $|t|$. The joint null "
-             f"distribution uses $K={K}$ permutations in which both measures are shifted by the "
-             "same within-factor offset, preserving their contemporaneous correlation.")
+             "tests use specification D and Driscoll--Kraay standard errors with six monthly lags. "
+             "The unadjusted column is the single-test permutation $p$-value from the same "
+             "calendar-aligned null. For the joint null "
+             "distribution, both measures are shifted together within each factor on the full "
+             "calendar frame (months in which both measures are observed) and the shifted values "
+             "are mapped back to each test's own estimation sample ($N=699$, 687, and 669 at "
+             f"$h=1,3,6$), so all six tests share one null distribution; $K={K}$ permutations. "
+             "The single-step maxT column uses the maximum $|t|$ across the six tests in each "
+             "permutation; the stepdown column is the Westfall--Young stepdown adjustment, which "
+             "is monotone in $|t|$. Null statistics at least as large as the observed value are "
+             "counted, so ties are treated conservatively.")
     write_tpt("table_family.tex", out, notes, size=r"\small", sep="5pt")
 
 
@@ -636,6 +640,21 @@ def table6() -> None:
                    f"{cell(r['beta'], r['p_placebo'])} & {r['t']:.2f} & "
                    f"{pfmt(r['p_placebo'])} & {int(r['n'])} \\\\")
     out += [r"\bottomrule", r"\end{tabular}"]
+    long_leg = d[(d["analysis"] == "leg decomposition (same RHS)")
+                 & (d["measure"] == "crowd_margin") & (d["group"] == "long")
+                 & (d["horizon"] == 6)].iloc[0]
+    short_leg = d[(d["analysis"] == "leg decomposition (same RHS)")
+                  & (d["measure"] == "crowd_margin") & (d["group"] == "short")
+                  & (d["horizon"] == 6)].iloc[0]
+    ci_lo = long_leg["beta"] - 1.96 * long_leg["se"]
+    ci_hi = long_leg["beta"] + 1.96 * long_leg["se"]
+    short_abs = abs(short_leg["beta"])
+    if ci_lo <= short_abs <= ci_hi or ci_lo <= -short_abs <= ci_hi:
+        ci_conclusion = ("so a long-leg association of the same size as the short-leg estimate "
+                         "is not ruled out.")
+    else:
+        ci_conclusion = ("so a long-leg association of the same size as the short-leg estimate "
+                         "is ruled out.")
     notes = ("Panel A regresses the long--short, long-leg, and short-leg horizon-sum returns on "
              "the same total measure and specification-D controls, so the long--short coefficient "
              "equals the long-leg minus the short-leg coefficient. A positive short-leg "
@@ -643,6 +662,9 @@ def table6() -> None:
              "precedes lower short-leg returns. Panel B regresses each leg's return on that leg's "
              "own financing intensity, controlling for factor fixed effects, the leg's own past "
              "1-, 6-, and 12-month returns, the margin-balance level, and the leg's coverage. "
+             f"The long-leg coefficient has a 95\\% confidence interval of "
+             f"[{ci_lo:.4f}, {ci_hi:.4f}] (normal approximation using Driscoll--Kraay standard "
+             f"errors), {ci_conclusion} "
              + STAR_NOTE)
     write_tpt("table6_legs.tex", out, notes, size=r"\small", sep="5pt")
 
@@ -1236,6 +1258,11 @@ def supp_secondmoment() -> None:
             out.append(f"{target_lab if meas == measures[0] else ''} & {SUPP_LP_LABEL[meas]} & "
                        f"{r['beta']:.4f}{stars(r['p_placebo'])} & {pfmt(r['p_placebo'])} & "
                        f"{pfmt(r['p_bh'])} & {pfmt(r['p_bonferroni'])} \\\\")
+    # 正文 §3.6 引用的融资测度十二个月坏周占比行（pooled，h=12）。
+    rb = pooled[(pooled["target"] == "weekly_bad_share") & (pooled["horizon"] == 12)
+                & (pooled["measure"] == "crowd_margin")].iloc[0]
+    out.append(f"Bad-week share & Margin-balance proxy & {rb['beta']:.4f}{stars(rb['p_placebo'])} & "
+               f"{pfmt(rb['p_placebo'])} & {pfmt(rb['p_bh'])} & {pfmt(rb['p_bonferroni'])} \\\\")
     out += [r"\bottomrule", r"\end{tabular}"]
     notes = ("Sample: monthly factor returns, 2016--2025; Panel A pools six factors and Panel B "
              "uses momentum only. The weekly Lou--Polk-style analogue and its screened variant are "
@@ -1245,7 +1272,9 @@ def supp_secondmoment() -> None:
              "A and B reports $\\beta$, starred by the permutation $p$-value, with the permutation "
              "$p$-value in parentheses. Panel C reports the raw permutation $p$-value, the "
              "Benjamini--Hochberg $q$-value, and the Bonferroni $p$-value within the four-measure "
-             "family for each target at $h=12$. HAC standard errors use twelve monthly lags. "
+             "family for each target at $h=12$; its final row adds the pooled margin-balance "
+             "proxy's twelve-month bad-week-share estimate referred to in the main text. HAC "
+             "standard errors use twelve monthly lags. "
              "Pooled rows use Driscoll--Kraay standard errors; momentum-only rows use ordinary "
              "Newey--West standard errors. " + perm_note(int(pooled["n_placebo"].min()),
                                                            int(pooled["n_placebo"].max()))
@@ -1283,7 +1312,9 @@ def supp_seeds() -> None:
              "replicates are never pooled to increase regression $N$ and are never selected by "
              "significance. $h=6$; the permutation draw count is 101, so the smallest attainable "
              "$p$-value is about 0.0099. The production regression is reproduced exactly by the "
-             "first seed. Stars use permutation $p$-values: * $p<0.10$, ** $p<0.05$, "
+             "first seed. Across the 20 predeclared seeds, the factor-demeaned pooled correlation "
+             "between the two measures ranges from $-0.095$ to $-0.035$. "
+             "Stars use permutation $p$-values: * $p<0.10$, ** $p<0.05$, "
              "*** $p<0.01$.")
     write_tpt("supp_seeds.tex", out, notes, size=r"\small")
 
@@ -1315,8 +1346,105 @@ def supp_joint() -> None:
     write_tpt("supp_joint.tex", out, notes, size=r"\small", sep="5pt")
 
 
+def supp_perm_sens() -> None:
+    """S14：三种置换对齐方案与整体平移敏感性。"""
+    p = REPORTS / "rev_family_sens.csv"
+    pb = REPORTS / "rev_block_shift.csv"
+    if not p.exists() or not pb.exists():
+        log.warning("缺 rev_family_sens.csv 或 rev_block_shift.csv，跳过 supp_perm_sens")
+        return
+    d = pd.read_csv(p)
+    b = pd.read_csv(pb)
+    schemes = [("within-sample", "Within-sample"), ("calendar-aligned", "Calendar-aligned"),
+               ("common-sample", "Common sample")]
+    out = [r"\begin{tabular}{llcccccc}", r"\toprule",
+           r"\multicolumn{8}{l}{\textit{Panel A: alternative permutation schemes ($p$-values)}} \\",
+           r" & & \multicolumn{2}{c}{Within-sample} & \multicolumn{2}{c}{Calendar-aligned} & "
+           r"\multicolumn{2}{c}{Common sample} \\",
+           r"\cmidrule(lr){3-4}\cmidrule(lr){5-6}\cmidrule(lr){7-8}",
+           r"Measure & $h$ & Single & Stepdown & Single & Stepdown & Single & Stepdown \\",
+           r"\midrule"]
+    for k, meas in enumerate(["comomentum", "crowd_margin"]):
+        for i, h in enumerate([1, 3, 6]):
+            cells = []
+            for scheme, _ in schemes:
+                r = d[(d["scheme"] == scheme) & (d["measure"] == meas) & (d["horizon"] == h)].iloc[0]
+                cells += [pfmt(r["p_maxT_single"]), pfmt(r["p_maxT_stepdown"])]
+            lab = en(meas) if i == 0 else ""
+            out.append(f"{lab} & {h} & " + " & ".join(cells) + r" \\")
+        if k == 0:
+            out.append(r"\midrule")
+    out += [r"\midrule",
+            r"\multicolumn{8}{l}{\textit{Panel B: shifting the measure with its own balance and coverage controls}} \\",
+            r"Measure & $h$ & $\beta$ & HAC $t$ & $N$ & Block $p$ & Measure-only $p$ & $K$ \\",
+            r"\midrule"]
+    for _, r in b.sort_values("horizon").iterrows():
+        out.append(f"Margin-balance proxy & {int(r['horizon'])} & "
+                   f"{r['beta']:.4f} & {r['t']:.2f} & {int(r['n'])} & "
+                   f"{pfmt(r['p_perm_block'])} & {pfmt(r['p_perm_measure_only'])} & {int(r['K'])} \\\\")
+    out += [r"\bottomrule", r"\end{tabular}"]
+    K = int(d["K"].max())
+    notes = ("Panel A reports, for each of the six primary tests, the single-test and "
+             "Westfall--Young stepdown permutation $p$-values under three schemes. Within-sample "
+             "shifts each measure inside that test's own estimation sample (the pre-revision "
+             "procedure); calendar-aligned shifts both measures together on each factor's full "
+             "calendar frame and maps them back to each test's sample (the formal scheme); "
+             "common-sample first restricts all six tests to the $N=669$ common sample. Panel B "
+             "shifts the margin-balance proxy together with its balance-level and long- and "
+             "short-leg coverage controls, holding past-return controls and factor fixed effects "
+             "fixed, and compares the resulting single-test permutation $p$-value with that from "
+             "shifting the measure alone on the same calendar frame. The shift count is "
+             f"$K={K}$ for the calendar-aligned scheme and $K=101$ for the two sample-based "
+             "schemes. For six-month tests, comomentum has first-order autocorrelation 0.54--0.82 "
+             "versus $-0.01$--0.42 for the margin measure; the 95th percentile of the null $|t|$ "
+             "is 2.79 versus 2.38, and discarding shifts within twelve months of zero gives "
+             "permutation $p$-values of 0.295 and 0.013. Stars are not used in this table.")
+    write_tpt("supp_perm_sens.tex", out, notes, size=r"\footnotesize", sep="3pt")
+
+
+def supp_coverage() -> None:
+    """S15：两腿覆盖率披露与空头腿覆盖率门槛。"""
+    p = REPORTS / "rev_coverage.csv"
+    if not p.exists():
+        log.warning("缺 rev_coverage.csv，跳过 supp_coverage")
+        return
+    d = pd.read_csv(p)
+    a = d[d["panel"] == "A"].copy()
+    b = d[d["panel"] == "B"].copy()
+    out = [r"\begin{tabular}{lccccccc}", r"\toprule",
+           r"\multicolumn{8}{l}{\textit{Panel A: leg-level coverage in the regression sample}} \\",
+           r" & & \multicolumn{3}{c}{Long leg} & \multicolumn{3}{c}{Short leg} \\",
+           r"\cmidrule(lr){3-5}\cmidrule(lr){6-8}",
+           r"Factor & Months & Mean & P10 & Median & Mean & P10 & Median \\",
+           r"\midrule"]
+    for _, r in a.iterrows():
+        out.append(f"{SUPP_FACTOR_LABEL.get(r['factor'], r['factor'])} & {int(r['n_months'])} & "
+                   f"{r['cover_long_mean']:.3f} & {r['cover_long_p10']:.3f} & "
+                   f"{r['cover_long_median']:.3f} & {r['cover_short_mean']:.3f} & "
+                   f"{r['cover_short_p10']:.3f} & {r['cover_short_median']:.3f} \\\\")
+    out += [r"\midrule",
+            r"\multicolumn{8}{l}{\textit{Panel B: short-leg coverage thresholds at $h=6$}} \\",
+            r"Sample & $N$ & $\beta$ & HAC $t$ & Perm. $p$ & $K$ & & \\",
+            r"\midrule"]
+    labels = {"baseline": "Baseline", "long-leg coverage >= 0.50": "Long-leg coverage $\\geq$ 0.50",
+              "short-leg coverage >= 0.50": "Short-leg coverage $\\geq$ 0.50"}
+    for _, r in b.iterrows():
+        out.append(f"{labels.get(r['sample'], r['sample'])} & {int(r['n'])} & "
+                   f"{r['beta']:.4f} & {r['t']:.2f} & {pfmt(r['p_perm'])} & {int(r['K'])} & & \\\\")
+    out += [r"\bottomrule", r"\end{tabular}"]
+    notes = ("Panel A reports the mean, 10th percentile, and median of long- and short-leg "
+             "coverage for each factor over the months in the $h=6$ specification-D regression "
+             "sample. Coverage is the formation-weight share of stocks with valid balance "
+             "snapshots in each leg. Panel B re-estimates specification D at $h=6$ with the "
+             "margin-balance proxy under coverage thresholds; permutation $p$-values use the "
+             "calendar-aligned frame of Table S14. A 70\\% short-leg threshold leaves 386 "
+             "observations, too few for the permutation procedure (DK $t=-1.70$). No stars are "
+             "used in this table.")
+    write_tpt("supp_coverage.tex", out, notes, size=r"\footnotesize", sep="3pt")
+
+
 def supplement_tables() -> None:
-    """Build the Online Supplement tables S1--S13 without touching main-text tables."""
+    """Build the Online Supplement tables S1--S15 without touching main-text tables."""
     supp_corr()
     supp_main_inference()
     supp_orth()
@@ -1328,6 +1456,8 @@ def supplement_tables() -> None:
     supp_secondmoment()
     supp_seeds()
     supp_joint()
+    supp_perm_sens()
+    supp_coverage()
 
 
 def main() -> None:

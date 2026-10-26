@@ -18,6 +18,9 @@
   reports/rev_permutation_sensitivity.csv
   reports/rev_stock_mechanism.csv
   reports/rev_family_maxT.csv      主检验族（2 测度 × h∈{1,3,6}）的 max-|t| 联合置换校正
+  reports/rev_family_sens.csv      三种置换对齐方案的敏感性（within/calendar/common）
+  reports/rev_block_shift.csv      测度与其自带控制变量整体平移的敏感性
+  reports/rev_coverage.csv         两腿覆盖率披露与空头腿覆盖率门槛结果
   reports/rev_joint.csv            两个测度同时进入规格 D 的联合回归（h∈{1,3,6}）
 """
 from __future__ import annotations
@@ -261,54 +264,63 @@ def permutation_sensitivity(df: pd.DataFrame, exclude: int = 12) -> pd.DataFrame
 # ------------------------------------------------------------------
 FAMILY_MEASURES = ["comomentum_z", "crowd_margin_z"]
 FAMILY_HORIZONS = [1, 3, 6]
+# 融资测度自带的控制变量：block 敏感性里与测度一起整体平移。
+BLOCK_COLS = ["crowd_margin_z", "level_margin_z", "cover_long_z", "cover_short_z"]
+# 自检用旧表位置：由项目根目录下的备份目录自动发现，避免在发布代码中写死本地审查路径。
+_OLD_FAMILY = sorted(CODE.parent.parent.glob("review_*/backup_before_H/reports/rev_family_maxT.csv"))
+BACKUP_REPORTS = _OLD_FAMILY[0].parent if _OLD_FAMILY else None
 
 
-def family_maxT(df: pd.DataFrame) -> pd.DataFrame:
-    """六个主检验（2 测度 × h∈{1,3,6}）的 max-|t| 联合置换校正。
+def calendar_frame(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+    """两个测度都非缺失的完整日历框架（每因子约 120 个月）。
 
-    观测与置换统计量都用规格 D 控制变量、DK 标准误、L=6。置换时**两个测度
-    同时**按因子循环平移同一个 k，这样零分布保留了两测度之间的同期相关；
-    每个检验用各自 dropna 后的样本，平移在该样本内按因子进行。
+    框架不因任何持有期的未来收益缺失而缩短；K = 各因子框架长度的最小值 − 1。
     """
-    ctrl = m16.controls_for(df, "D")
-    tests = []
-    for measure in FAMILY_MEASURES:
-        for h in FAMILY_HORIZONS:
-            y = f"fwd{h}"
-            cols = [measure] + ctrl
-            d = (df.dropna(subset=cols + [y])
-                  .sort_values(["ym", "factor"]).reset_index(drop=True))
-            if len(d) < 40:
-                raise ValueError(f"family 检验样本过小：{measure} h={h}, N={len(d)}")
-            tvals = time_index(d["ym"])
-            r = hac_ols(d[y].to_numpy(dtype=float), d[cols].to_numpy(dtype=float), cols,
-                        lags=6, time=tvals)
-            tests.append({"measure": measure, "horizon": h, "y": y, "d": d,
-                          "cols": cols, "t": float(r[measure]["t"])})
-    # 所有检验共用一个位移集合：取各检验「最短因子序列 − 1」的最小值。
-    K = min(int(t["d"].groupby("factor", observed=True).size().min()) - 1 for t in tests)
-    if K < 1:
-        raise ValueError("family 置换位移数不足")
-    log.info(f"family：{len(tests)} 个检验，共同位移 K={K}")
+    full = df.dropna(subset=FAMILY_MEASURES).sort_values(["ym", "factor"]).copy()
+    lengths = full.groupby("factor", observed=True).size()
+    if lengths.empty or int(lengths.min()) < 2:
+        raise ValueError("日历框架过短，无法置换")
+    return full, int(lengths.min()) - 1
 
-    null = np.empty((K, len(tests)), dtype=float)
-    for k in range(1, K + 1):
-        for j, t in enumerate(tests):
-            perm = _grouped_circular_shift(t["d"], t["measure"], "factor", k)
-            tvals = time_index(perm["ym"])
-            rr = hac_ols(perm[t["y"]].to_numpy(dtype=float),
-                         perm[t["cols"]].to_numpy(dtype=float), t["cols"], lags=6, time=tvals)
-            null[k - 1, j] = abs(float(rr[t["measure"]]["t"]))
 
-    obs = np.abs(np.array([t["t"] for t in tests], dtype=float))
+def _roll_block(frame: pd.DataFrame, columns: list[str], k: int) -> pd.DataFrame:
+    """在完整日历框架内按因子把一组列**整体**循环平移同一个 k 个月。"""
+    out = frame.copy()
+    for _, idx in frame.groupby("factor", observed=True, sort=False).groups.items():
+        ordered = frame.loc[idx].sort_values("ym").index
+        n = len(ordered)
+        for c in columns:
+            out.loc[ordered, c] = np.roll(frame.loc[ordered, c].to_numpy(dtype=float), k % n)
+    return out
+
+
+def _map_shifted(d: pd.DataFrame, rolled: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
+    """把框架内平移后的测度按 (factor, ym) 映射回检验样本。"""
+    perm = d.copy()
+    key = pd.MultiIndex.from_frame(d[["factor", "ym"]])
+    for c in columns:
+        mapping = rolled.set_index(["factor", "ym"])[c]
+        perm[c] = key.map(mapping).to_numpy()
+        if perm[c].isna().any():
+            raise ValueError(f"平移映射后 {c} 出现缺失")
+    return perm
+
+
+def _abs_t(d: pd.DataFrame, measure: str, cols: list[str], y: str) -> float:
+    rr = hac_ols(d[y].to_numpy(dtype=float), d[cols].to_numpy(dtype=float), cols,
+                 lags=6, time=time_index(d["ym"]))
+    return abs(float(rr[measure]["t"]))
+
+
+def _family_pvalues(null: np.ndarray, obs: np.ndarray,
+                    K: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     p_unadj = (1.0 + np.sum(null >= obs[None, :], axis=0)) / (1.0 + K)
     max_stat = null.max(axis=1)
     p_maxT_single = (1.0 + np.sum(max_stat[:, None] >= obs[None, :], axis=0)) / (1.0 + K)
-
     # Westfall–Young 逐步下降：按 |t| 从大到小，每一步的 max 只在剩余检验里取；
     # 最后对 p 做单调化，保证排在前面（更强）的检验不会得到更大的校正 p。
     order = np.argsort(-obs, kind="stable")
-    p_step = np.empty(len(tests), dtype=float)
+    p_step = np.empty(len(obs), dtype=float)
     prev = 0.0
     for rank, j in enumerate(order):
         remaining = order[rank:]
@@ -316,7 +328,63 @@ def family_maxT(df: pd.DataFrame) -> pd.DataFrame:
         pj = (1.0 + np.sum(m_r >= obs[j])) / (1.0 + K)
         prev = max(prev, pj)
         p_step[j] = prev
+    return p_unadj, p_maxT_single, p_step
 
+
+def _family_tests(df: pd.DataFrame, sample: pd.DataFrame | None = None) -> list[dict]:
+    """构造六个主检验；sample 给定时统一用该样本（共同样本方案）。"""
+    ctrl = m16.controls_for(df, "D")
+    base = df if sample is None else sample
+    tests = []
+    for measure in FAMILY_MEASURES:
+        for h in FAMILY_HORIZONS:
+            y = f"fwd{h}"
+            cols = [measure] + ctrl
+            d = (base.dropna(subset=cols + [y])
+                 .sort_values(["ym", "factor"]))
+            if len(d) < 40:
+                raise ValueError(f"family 检验样本过小：{measure} h={h}, N={len(d)}")
+            r = hac_ols(d[y].to_numpy(dtype=float), d[cols].to_numpy(dtype=float), cols,
+                        lags=6, time=time_index(d["ym"]))
+            tests.append({"measure": measure, "horizon": h, "y": y, "d": d,
+                          "cols": cols, "t": float(r[measure]["t"]),
+                          "beta": float(r[measure]["coef"]), "n": int(r["_n"])})
+    return tests
+
+
+def _family_rows(scheme: str, tests: list[dict], null: np.ndarray,
+                 K: int) -> list[dict]:
+    obs = np.abs(np.array([t["t"] for t in tests], dtype=float))
+    p_u, p_s, p_d = _family_pvalues(null, obs, K)
+    rows = []
+    for i, t in enumerate(tests):
+        rows.append({"scheme": scheme, "measure": t["measure"].replace("_z", ""),
+                     "horizon": t["horizon"], "n": t["n"], "beta": t["beta"],
+                     "t": t["t"], "p_unadj": p_u[i], "p_maxT_single": p_s[i],
+                     "p_maxT_stepdown": p_d[i], "K": K})
+    return rows
+
+
+def family_maxT(df: pd.DataFrame) -> pd.DataFrame:
+    """六个主检验（2 测度 × h∈{1,3,6}）的 max-|t| 联合置换校正（日历对齐）。
+
+    正式方案：在每个因子的完整日历框架（两个测度都非缺失的月份）内，把两个
+    测度**同时**循环平移同一个 k，再按 (月份, 因子) 映射回各检验自己的估计
+    样本（N=699/687/669）。六个检验因此共享同一个联合零分布。
+    """
+    tests = _family_tests(df)
+    frame, K = calendar_frame(df)
+    log.info(f"family：{len(tests)} 个检验，日历框架 {len(frame)} 行，K={K}")
+
+    null = np.empty((K, len(tests)), dtype=float)
+    for k in range(1, K + 1):
+        rolled = _roll_block(frame, FAMILY_MEASURES, k)
+        for j, t in enumerate(tests):
+            perm = _map_shifted(t["d"], rolled, [t["measure"]])
+            null[k - 1, j] = _abs_t(perm, t["measure"], t["cols"], t["y"])
+
+    obs = np.abs(np.array([t["t"] for t in tests], dtype=float))
+    p_unadj, p_maxT_single, p_step = _family_pvalues(null, obs, K)
     out = pd.DataFrame({
         "measure": [t["measure"].replace("_z", "") for t in tests],
         "horizon": [t["horizon"] for t in tests],
@@ -325,9 +393,157 @@ def family_maxT(df: pd.DataFrame) -> pd.DataFrame:
         "p_maxT_single": p_maxT_single,
         "p_maxT_stepdown": p_step,
         "K": K,
+        "scheme": "calendar-aligned",
     })
+    # 自检：观测 t 必须与备份里的旧 rev_family_maxT.csv 完全一致。
+    old_path = (BACKUP_REPORTS / "rev_family_maxT.csv") if BACKUP_REPORTS else None
+    if old_path is not None and old_path.exists():
+        old = pd.read_csv(old_path)
+        m = out.merge(old, on=["measure", "horizon"], suffixes=("_new", "_old"))
+        if len(m) != len(out):
+            raise AssertionError("family 自检失败：新旧检验集合不一致")
+        max_diff = float(np.max(np.abs(m["t_new"] - m["t_old"])))
+        if max_diff > 1e-8:
+            raise AssertionError(f"family 自检失败：观测 |t| 最大差异 {max_diff}")
+        log.info(f"family 自检通过：观测 t 与旧表的 max|diff|={max_diff:.2e}")
+    else:
+        # 公开克隆中没有本地审查备份；本地 H 轮执行时备份存在，断言已实际执行并通过。
+        log.warning(f"family 自检跳过：未找到备份旧表 {old_path}")
     out.to_csv(REPORTS / "rev_family_maxT.csv", index=False, encoding="utf-8-sig")
-    log.info("主检验族 max-|t| 校正：\n" + out.round(4).to_string(index=False))
+    log.info("主检验族 max-|t| 校正（日历对齐）：\n" + out.round(4).to_string(index=False))
+    return out
+
+
+def family_sens(df: pd.DataFrame) -> pd.DataFrame:
+    """三种置换对齐方案下六个主检验的单检验 p 与 stepdown p（敏感性）。"""
+    rows: list[dict] = []
+
+    # (1) within-sample：旧做法，各检验在自己的估计样本内平移。
+    tests = _family_tests(df)
+    K = min(int(t["d"].groupby("factor", observed=True).size().min()) - 1 for t in tests)
+    null = np.empty((K, len(tests)), dtype=float)
+    for k in range(1, K + 1):
+        for j, t in enumerate(tests):
+            perm = _grouped_circular_shift(t["d"], t["measure"], "factor", k)
+            null[k - 1, j] = _abs_t(perm, t["measure"], t["cols"], t["y"])
+    rows += _family_rows("within-sample", tests, null, K)
+
+    # (2) calendar-aligned：本轮正式方案。
+    frame, K_cal = calendar_frame(df)
+    null = np.empty((K_cal, len(tests)), dtype=float)
+    for k in range(1, K_cal + 1):
+        rolled = _roll_block(frame, FAMILY_MEASURES, k)
+        for j, t in enumerate(tests):
+            perm = _map_shifted(t["d"], rolled, [t["measure"]])
+            null[k - 1, j] = _abs_t(perm, t["measure"], t["cols"], t["y"])
+    rows += _family_rows("calendar-aligned", tests, null, K_cal)
+
+    # (3) common-sample：三个持有期统一限制到 N=669 的共同样本，再在样本内平移。
+    common_idx = set.intersection(*[set(t["d"].index) for t in tests])
+    common = df.loc[sorted(common_idx)].sort_values(["ym", "factor"]).reset_index(drop=True)
+    tests_c = _family_tests(common, common)
+    K_c = min(int(t["d"].groupby("factor", observed=True).size().min()) - 1 for t in tests_c)
+    null = np.empty((K_c, len(tests_c)), dtype=float)
+    for k in range(1, K_c + 1):
+        for j, t in enumerate(tests_c):
+            perm = _grouped_circular_shift(t["d"], t["measure"], "factor", k)
+            null[k - 1, j] = _abs_t(perm, t["measure"], t["cols"], t["y"])
+    rows += _family_rows("common-sample", tests_c, null, K_c)
+
+    out = pd.DataFrame(rows, columns=["scheme", "measure", "horizon", "n", "beta", "t",
+                                      "p_unadj", "p_maxT_single", "p_maxT_stepdown", "K"])
+    out.to_csv(REPORTS / "rev_family_sens.csv", index=False, encoding="utf-8-sig")
+    log.info("置换方案敏感性：\n" + out.round(4).to_string(index=False))
+    return out
+
+
+def block_shift(df: pd.DataFrame) -> pd.DataFrame:
+    """把融资测度与其自带控制变量作为整体一起平移的敏感性（日历对齐框架）。"""
+    ctrl = m16.controls_for(df, "D")
+    frame, K = calendar_frame(df)
+    rows = []
+    for h in FAMILY_HORIZONS:
+        y = f"fwd{h}"
+        cols = ["crowd_margin_z"] + ctrl
+        d = (df.dropna(subset=cols + [y])
+              .sort_values(["ym", "factor"]).reset_index(drop=True))
+        r = hac_ols(d[y].to_numpy(dtype=float), d[cols].to_numpy(dtype=float), cols,
+                    lags=6, time=time_index(d["ym"]))
+        obs = abs(float(r["crowd_margin_z"]["t"]))
+        ts_block, ts_measure = [], []
+        for k in range(1, K + 1):
+            rolled = _roll_block(frame, BLOCK_COLS, k)
+            perm = _map_shifted(d, rolled, BLOCK_COLS)
+            ts_block.append(_abs_t(perm, "crowd_margin_z", cols, y))
+            rolled_m = _roll_block(frame, ["crowd_margin_z"], k)
+            perm_m = _map_shifted(d, rolled_m, ["crowd_margin_z"])
+            ts_measure.append(_abs_t(perm_m, "crowd_margin_z", cols, y))
+        rows.append({"measure": "crowd_margin", "horizon": h, "n": int(r["_n"]),
+                     "beta": float(r["crowd_margin_z"]["coef"]),
+                     "t": float(r["crowd_margin_z"]["t"]),
+                     "p_perm_block": float((1.0 + np.sum(np.array(ts_block) >= obs)) / (1.0 + K)),
+                     "p_perm_measure_only": float((1.0 + np.sum(np.array(ts_measure) >= obs)) / (1.0 + K)),
+                     "K": K})
+    out = pd.DataFrame(rows, columns=["measure", "horizon", "n", "beta", "t",
+                                      "p_perm_block", "p_perm_measure_only", "K"])
+    out.to_csv(REPORTS / "rev_block_shift.csv", index=False, encoding="utf-8-sig")
+    log.info("整体平移敏感性：\n" + out.round(4).to_string(index=False))
+    return out
+
+
+def coverage_analysis(df: pd.DataFrame) -> pd.DataFrame:
+    """覆盖率披露：两腿覆盖率分布 + 空头腿覆盖率门槛下的融资测度结果。"""
+    ctrl = m16.controls_for(df, "D")
+    base = (df.dropna(subset=["crowd_margin_z"] + ctrl + ["fwd6"])
+            .sort_values(["ym", "factor"]).copy())
+    cr = read_parquet(CLEAN / "crowding.parquet")
+    cr["ym"] = pd.PeriodIndex(cr["ym"], freq="M")
+    keys = base[["ym", "factor"]].drop_duplicates()
+    cov = keys.merge(cr[["ym", "factor", "cover_long", "cover_short"]],
+                     on=["ym", "factor"], how="left", validate="one_to_one")
+    if cov[["cover_long", "cover_short"]].isna().any().any():
+        raise ValueError("覆盖率合并出现缺失")
+    rows = []
+    for f in FACTORS:
+        g = cov[cov["factor"] == f]
+        rows.append({
+            "panel": "A", "factor": f, "n_months": int(len(g)),
+            "cover_long_mean": float(g["cover_long"].mean()),
+            "cover_long_p10": float(g["cover_long"].quantile(0.10)),
+            "cover_long_median": float(g["cover_long"].median()),
+            "cover_short_mean": float(g["cover_short"].mean()),
+            "cover_short_p10": float(g["cover_short"].quantile(0.10)),
+            "cover_short_median": float(g["cover_short"].median()),
+        })
+
+    frame, K = calendar_frame(df)
+    variants = [
+        ("baseline", df),
+        ("long-leg coverage >= 0.50", df[df["cover_long"] >= 0.50]),
+        ("short-leg coverage >= 0.50", df[df["cover_short"] >= 0.50]),
+    ]
+    for name, sub in variants:
+        cols = ["crowd_margin_z"] + ctrl
+        d = (sub.dropna(subset=cols + ["fwd6"])
+             .sort_values(["ym", "factor"]).reset_index(drop=True))
+        r = hac_ols(d["fwd6"].to_numpy(dtype=float), d[cols].to_numpy(dtype=float), cols,
+                    lags=6, time=time_index(d["ym"]))
+        obs = abs(float(r["crowd_margin_z"]["t"]))
+        ts = []
+        for k in range(1, K + 1):
+            rolled = _roll_block(frame, ["crowd_margin_z"], k)
+            perm = _map_shifted(d, rolled, ["crowd_margin_z"])
+            ts.append(_abs_t(perm, "crowd_margin_z", cols, "fwd6"))
+        rows.append({
+            "panel": "B", "sample": name, "measure": "crowd_margin", "horizon": 6,
+            "n": int(r["_n"]), "beta": float(r["crowd_margin_z"]["coef"]),
+            "t": float(r["crowd_margin_z"]["t"]),
+            "p_perm": float((1.0 + np.sum(np.array(ts) >= obs)) / (1.0 + K)),
+            "K": K,
+        })
+    out = pd.DataFrame(rows)
+    out.to_csv(REPORTS / "rev_coverage.csv", index=False, encoding="utf-8-sig")
+    log.info("覆盖率披露：\n" + out.round(4).to_string(index=False))
     return out
 
 
@@ -512,7 +728,8 @@ def figure_series() -> None:
 
 def main() -> None:
     log.info(f"31 复审补充分析 | 北京时间 {now_local():%Y-%m-%d %H:%M:%S}")
-    which = set(sys.argv[1:]) or {"robust", "slopes", "perm", "family", "mech", "joint", "fig"}
+    which = set(sys.argv[1:]) or {"robust", "slopes", "perm", "family", "family_sens", "block",
+                                  "coverage", "mech", "joint", "fig"}
     if "fig" in which:
         figure_series()
         if which == {"fig"}:
@@ -524,6 +741,12 @@ def main() -> None:
         permutation_sensitivity(df)
     if "family" in which:
         family_maxT(df)
+    if "family_sens" in which:
+        family_sens(df)
+    if "block" in which:
+        block_shift(df)
+    if "coverage" in which:
+        coverage_analysis(df)
     if "joint" in which:
         joint_regression(df)
     if "slopes" in which:
